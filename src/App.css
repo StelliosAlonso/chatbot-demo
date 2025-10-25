@@ -1,0 +1,42 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(135deg, rgb(71, 17, 118) 3%, rgb(131, 57, 157) 44%, rgb(149, 85, 182) 69%, rgb(145, 134, 215) 94%);
+}
+
+#root {
+  margin: 0 auto;
+  padding: 0;
+  text-align: center;
+  overflow: hidden;
+  width: 100vw;
+}
+
+.centered-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Styles for mobile devices with vertical screen orientation */
+@media (max-width: 920px), (orientation: portrait) {
+  .centered-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100vw;
+    overflow: hidden;
+  }
+}
+
