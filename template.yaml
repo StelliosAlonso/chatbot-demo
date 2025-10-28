@@ -241,7 +241,7 @@ Resources:
           cache:
             paths:
               - node_modules/**/*
-      # Opcional: puedes definir IAM role para Amplify si lo necesitas (omito para simplicidad)
+
 
   AmplifyBranch:
     Type: AWS::Amplify::Branch
@@ -267,12 +267,7 @@ Resources:
               Service:
                 - amplify.amazonaws.com
             Action: sts:AssumeRole
-            Condition:
-              ArnLike:
-                aws:SourceArn: !Sub "arn:aws:amplify:${AWS::Region}:${AWS::AccountId}:apps/*"
-              StringEquals:
-                aws:SourceAccount: !Ref "AWS::AccountId"
-      # Para pruebas rápidas uso AdministratorAccess; en producción debes restringir esto
+      # Para pruebas rápidas puedes usar AdministratorAccess; en producción limita esto.
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AdministratorAccess
 

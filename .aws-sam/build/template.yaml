@@ -284,13 +284,6 @@ Resources:
             Service:
             - amplify.amazonaws.com
           Action: sts:AssumeRole
-          Condition:
-            ArnLike:
-              aws:SourceArn:
-                Fn::Sub: arn:aws:amplify:${AWS::Region}:${AWS::AccountId}:apps/*
-            StringEquals:
-              aws:SourceAccount:
-                Ref: AWS::AccountId
       ManagedPolicyArns:
       - arn:aws:iam::aws:policy/AdministratorAccess
 Outputs:
