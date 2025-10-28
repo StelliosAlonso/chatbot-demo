@@ -1,0 +1,12 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "chatbot"
+resolve_s3 = true
+s3_prefix = "chatbot"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+disable_rollback = true
+parameter_overrides = "EnvironmentName=\"demo\" CallbackURLs=\"http://localhost:5173/\" LogoutURLs=\"http://localhost:5173/\" BedrockModelId=\"amazon.titan-embed-001\" BedrockAgentName=\"chatbot-demo-agent\" GitHubRepo=\"https://github.com/StelliosAlonso/chatbot-demo\" GitHubAccessTokenSecretName=\"my/github/pat\" AmplifyBranchName=\"main\""
+image_repositories = []

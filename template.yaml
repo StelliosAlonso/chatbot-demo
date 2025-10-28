@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM stack for demo chatbot: Cognito (UserPool + UserPoolClient + IdentityPool),
+  Roles, Amazon Bedrock Agent (plus alias) and an Amplify App + Branch (IaC).
+  Amplify can be optionally linked to a GitHub repo if GitHubRepo is provided.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: demo
+    Description: Environment name prefix
+
+  CallbackURLs:
+    Type: CommaDelimitedList
+    Default: "http://localhost:5173/"
+    Description: Callback URLs for the Cognito App Client (comma-separated)
+
+  LogoutURLs:
+    Type: CommaDelimitedList
+    Default: "http://localhost:5173/"
+    Description: Sign out URLs for the Cognito App Client (comma-separated)
+
+  BedrockModelId:
+    Type: String
+    Default: "amazon.titan-embed-001"
+    Description: Foundation model id to use for the Bedrock Agent (adjust per region)
+
+  BedrockAgentName:
+    Type: String
+    Default: "chatbot-demo-agent"
+    Description: Name for the Bedrock Agent
+
+  GitHubRepo:
+    Type: String
+    Default: ""
+    Description: "Repository URL (optional, left empty when not linking to GitHub). Example: https://github.com/OWNER/REPO or OWNER/REPO"
+
+  GitHubAccessTokenSecretName:
+    Type: String
+    Default: ""
+    Description: "Secrets Manager secret name for GitHub PAT (optional). Secret JSON must include key 'github_token'"
+
+  AmplifyBranchName:
+    Type: String
+    Default: main
+    Description: "Branch name to create in Amplify (default: main)"
+
+Conditions:
+  UseGitHub: !Not [ !Equals [ !Ref GitHubRepo, "" ] ]
+
+Resources:
+
+  ### Cognito User Pool
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${EnvironmentName}-userpool"
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      Schema:
+        - Name: email
+          Required: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireUppercase: false
+          RequireSymbols: false
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${EnvironmentName}-userpool-client"
+      UserPoolId: !Ref CognitoUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      PreventUserExistenceErrors: ENABLED
+      SupportedIdentityProviders:
+        - COGNITO
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs: !Ref CallbackURLs
+      LogoutURLs: !Ref LogoutURLs
+
+  ### Cognito Identity Pool (Federated Identities)
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${EnvironmentName}-identity-pool"
+      AllowUnauthenticatedIdentities: false
+      CognitoIdentityProviders:
+        - ClientId: !Ref CognitoUserPoolClient
+          ProviderName: !Sub "cognito-idp.${AWS::Region}.amazonaws.com/${CognitoUserPool}"
+          ServerSideTokenCheck: false
+
+  ### IAM Role for Authenticated Users (frontend)
+  CognitoAuthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess   # demo convenience
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  CognitoUnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref CognitoIdentityPool
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ### Attach roles to Identity Pool
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoAuthRole.Arn
+        unauthenticated: !GetAtt CognitoUnauthRole.Arn
+
+  ### Service Role for Bedrock Agent (the agent's resource role)
+  BedrockAgentServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Path: /
+
+  ### Bedrock Agent (minimal)
+  BedrockAgent:
+    Type: AWS::Bedrock::Agent
+    Properties:
+      AgentName: !Ref BedrockAgentName
+      AgentResourceRoleArn: !GetAtt BedrockAgentServiceRole.Arn
+      FoundationModel: !Ref BedrockModelId
+      AutoPrepare: true
+      Instruction: >
+        You are a helpful and concise assistant that answers user questions,
+        follows safety guidelines, and returns clear, actionable responses.
+      Description: !Sub "Agent created by stack ${AWS::StackName}"
+
+  ### Bedrock Agent Alias
+  BedrockAgentAlias:
+    Type: AWS::Bedrock::AgentAlias
+    Properties:
+      AgentId: !GetAtt BedrockAgent.AgentId
+      AgentAliasName: !Sub "${EnvironmentName}-alias"
+      Description: "Alias created by SAM template"
+    DependsOn: BedrockAgent
+
+  ### -------------------- Amplify App (IaC) — con BuildSpec para Vite --------------------
+  AmplifyApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub "${EnvironmentName}-amplify-app"
+      # Si se proporciona GitHubRepo, CloudFormation añade Repository y AccessToken vía condition
+      Repository: !If [ UseGitHub, !Ref GitHubRepo, !Ref "AWS::NoValue" ]
+      AccessToken: !If
+        - UseGitHub
+        - !Sub "{{resolve:secretsmanager:${GitHubAccessTokenSecretName}:SecretString:github_token}}"
+        - !Ref "AWS::NoValue"
+      # Environment variables: incluimos ambas formas (REACT_APP_* y VITE_*)
+      EnvironmentVariables:
+        - Name: REACT_APP_USER_POOL_ID
+          Value: !Ref CognitoUserPool
+        - Name: REACT_APP_USER_POOL_CLIENT_ID
+          Value: !Ref CognitoUserPoolClient
+        - Name: REACT_APP_IDENTITY_POOL_ID
+          Value: !Ref CognitoIdentityPool
+        - Name: REACT_APP_REGION
+          Value: !Ref AWS::Region
+        - Name: REACT_APP_BEDROCK_AGENT_ID
+          Value: !GetAtt BedrockAgent.AgentId
+        # Vite-specific envs (prefijo VITE_ para ser accesibles en el bundle cliente)
+        - Name: VITE_USER_POOL_ID
+          Value: !Ref CognitoUserPool
+        - Name: VITE_USER_POOL_CLIENT_ID
+          Value: !Ref CognitoUserPoolClient
+        - Name: VITE_IDENTITY_POOL_ID
+          Value: !Ref CognitoIdentityPool
+        - Name: VITE_REGION
+          Value: !Ref AWS::Region
+        - Name: VITE_BEDROCK_AGENT_ID
+          Value: !GetAtt BedrockAgent.AgentId
+      # BuildSpec para proyectos con Vite -> produce 'dist' por defecto
+      BuildSpec: |
+        version: 1
+        frontend:
+          phases:
+            preBuild:
+              commands:
+                - npm ci
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: dist
+            files:
+              - "**/*"
+          cache:
+            paths:
+              - node_modules/**/*
+      # Opcional: puedes definir IAM role para Amplify si lo necesitas (omito para simplicidad)
+
+  AmplifyBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt AmplifyApp.AppId
+      BranchName: !Ref AmplifyBranchName
+      EnableAutoBuild: !If [ UseGitHub, true, false ]
+      EnablePerformanceMode: false
+      Stage: PRODUCTION
+    DependsOn: AmplifyApp
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool Id
+    Value: !Ref CognitoUserPool
+    Export:
+      Name: !Sub "${AWS::StackName}:UserPoolId"
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client Id
+    Value: !Ref CognitoUserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}:UserPoolClientId"
+
+  IdentityPoolId:
+    Description: Cognito Identity Pool Id
+    Value: !Ref CognitoIdentityPool
+    Export:
+      Name: !Sub "${AWS::StackName}:IdentityPoolId"
+
+  CognitoAuthRoleArn:
+    Description: ARN of authenticated role used by identity pool
+    Value: !GetAtt CognitoAuthRole.Arn
+
+  BedrockAgentArn:
+    Description: ARN of the created Bedrock Agent
+    Value: !GetAtt BedrockAgent.AgentArn
+
+  BedrockAgentId:
+    Description: Bedrock Agent Id
+    Value: !GetAtt BedrockAgent.AgentId
+
+  AmplifyAppId:
+    Description: Amplify App Id
+    Value: !GetAtt AmplifyApp.AppId
+
+  AmplifyBranchArn:
+    Description: Amplify Branch ARN (constructed)
+    Value:
+      Fn::Sub:
+        - "arn:aws:amplify:${AWS::Region}:${AWS::AccountId}:apps/${AppId}/branches/${BranchName}"
+        - {
+            AppId: !GetAtt AmplifyApp.AppId,
+            BranchName: !Ref AmplifyBranchName
+          }
