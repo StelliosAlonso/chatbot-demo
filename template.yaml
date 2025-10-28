@@ -199,6 +199,7 @@ Resources:
         - UseGitHub
         - !Sub "{{resolve:secretsmanager:${GitHubAccessTokenSecretName}:SecretString:github_token}}"
         - !Ref "AWS::NoValue"
+      IAMServiceRole: !GetAtt AmplifyServiceRole.Arn 
       # Environment variables: incluimos ambas formas (REACT_APP_* y VITE_*)
       EnvironmentVariables:
         - Name: REACT_APP_USER_POOL_ID
@@ -251,6 +252,32 @@ Resources:
       EnablePerformanceMode: false
       Stage: PRODUCTION
     DependsOn: AmplifyApp
+
+
+  ### IAM Role que Amplify asumirá durante builds/deploy (Service Role)
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-amplify-service-role-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:amplify:${AWS::Region}:${AWS::AccountId}:apps/*"
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+      # Para pruebas rápidas uso AdministratorAccess; en producción debes restringir esto
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+
+
 
 Outputs:
   UserPoolId:

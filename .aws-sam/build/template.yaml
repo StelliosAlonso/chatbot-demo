@@ -211,6 +211,10 @@ Resources:
         - UseGitHub
         - Fn::Sub: '{{resolve:secretsmanager:${GitHubAccessTokenSecretName}:SecretString:github_token}}'
         - Ref: AWS::NoValue
+      IAMServiceRole:
+        Fn::GetAtt:
+        - AmplifyServiceRole
+        - Arn
       EnvironmentVariables:
       - Name: REACT_APP_USER_POOL_ID
         Value:
@@ -267,6 +271,28 @@ Resources:
       EnablePerformanceMode: false
       Stage: PRODUCTION
     DependsOn: AmplifyApp
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: ${EnvironmentName}-amplify-service-role-${AWS::AccountId}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - amplify.amazonaws.com
+          Action: sts:AssumeRole
+          Condition:
+            ArnLike:
+              aws:SourceArn:
+                Fn::Sub: arn:aws:amplify:${AWS::Region}:${AWS::AccountId}:apps/*
+            StringEquals:
+              aws:SourceAccount:
+                Ref: AWS::AccountId
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
 Outputs:
   UserPoolId:
     Description: Cognito User Pool Id
