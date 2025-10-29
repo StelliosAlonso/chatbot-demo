@@ -56,18 +56,26 @@ const ConfigComponent = ({ onConfigSet, isEditingConfig, setEditingConfig }) => 
   });
   const [errors, setErrors] = useState({});
 
-  const configureAmplify = useCallback((config) => {
+  const configureAmplify = useCallback((cfg) => {
+    // Si no hay configuración cognito, no hacemos nada
+    if (!cfg || !cfg.cognito) return;
+  
     Amplify.configure({
       Auth: {
-        Cognito: {
-          region: config.cognito.region,
-          userPoolId: config.cognito.userPoolId,
-          userPoolClientId: config.cognito.userPoolClientId,
-          identityPoolId: config.cognito.identityPoolId
-        },
+        // Amplify espera estas propiedades en Auth (no en Auth.Cognito)
+        region: cfg.cognito.region,
+        userPoolId: cfg.cognito.userPoolId,
+        userPoolWebClientId: cfg.cognito.userPoolClientId, // OJO: es userPoolWebClientId
+        identityPoolId: cfg.cognito.identityPoolId,
+        authenticationFlowType: 'USER_PASSWORD_AUTH' // opcional, ayuda en algunos flujos
       }
     });
+  
+    // opcional: si quieres exponer Auth globalmente para debugging
+    // import { Auth } from 'aws-amplify' y asegúrate no dejar esto en prod
+    // window._AmplifyAuth = (await import('aws-amplify')).Auth;
   }, []);
+  
 
   const validateForm = () => {
     const newErrors = {};
