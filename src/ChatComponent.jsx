@@ -18,8 +18,21 @@ import {
   TopNavigation
 } from "@cloudscape-design/components";
 import PropTypes from 'prop-types';
+
+
+
 import * as Amplify from 'aws-amplify'
 const { Auth } = Amplify;
+
+// import * as AmplifyLib from 'aws-amplify';
+
+
+
+/*
+// IMPORTS robustos para aws-amplify (funciona con Vite)
+import * as Amplify from 'aws-amplify';   // import "todo" como objeto
+console.log('Amplify object present?', Boolean(Amplify));
+*/
 
 import { BedrockAgentRuntimeClient, InvokeAgentCommand } from "@aws-sdk/client-bedrock-agent-runtime";
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from "@aws-sdk/client-bedrock-agentcore";
@@ -166,6 +179,61 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     }
   }, [createNewSession, fetchMessagesForSession]);
 
+
+
+
+  // -------------------------------
+  // Helper para resolver el módulo Auth (compatible v5 y v6)
+  // -------------------------------
+  const ensureAuthModule = async ({ timeout = 5000, interval = 200 } = {}) => {
+    const start = Date.now();
+
+    const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+
+    while (Date.now() - start < timeout) {
+      try {
+        // 1) Si declaraste `const { Auth } = Amplify;` y Auth ya está definido:
+        if (typeof Auth !== 'undefined' && Auth && typeof Auth.currentCredentials === 'function') {
+          return Auth; // objeto Auth estilo v5
+        }
+
+        // 2) Si importaste Amplify como namespace: import * as Amplify from 'aws-amplify'
+        //    y Amplify.Auth está presente:
+        if (typeof Amplify !== 'undefined' && Amplify && Amplify.Auth && typeof Amplify.Auth.currentCredentials === 'function') {
+          return Amplify.Auth;
+        }
+
+        // 3) Intentar import dinámico (v6 modular): 'aws-amplify/auth'
+        //    En v6 se exportan funciones como currentCredentials, signOut, etc.
+        try {
+          const authModule = await import('aws-amplify/auth');
+          // Si el módulo tiene currentCredentials o signOut lo consideramos válido
+          if (authModule && (typeof authModule.currentCredentials === 'function' || typeof authModule.signOut === 'function')) {
+            return authModule;
+          }
+        } catch (e) {
+          // ignore, seguiremos intentando fallbacks
+        }
+
+        // 4) Algunos bundles pueden exponer Amplify.default.Auth
+        if (typeof Amplify !== 'undefined' && Amplify && Amplify.default && Amplify.default.Auth && typeof Amplify.default.Auth.currentCredentials === 'function') {
+          return Amplify.default.Auth;
+        }
+      } catch (err) {
+        // no detener el loop por errores temporales
+        console.debug('ensureAuthModule check error (ignorando):', err);
+      }
+
+      // esperar un poco antes de reintentar
+      await wait(interval);
+    }
+
+    // Timeout: no se encontró Auth
+    throw new Error('Auth module no disponible: revisa tu import de aws-amplify / versión. Timeout alcanzado en ensureAuthModule.');
+  };
+
+
+  
   /**
    * Effect hook to initialize AWS Bedrock client and fetch credentials
    * Sets up the connection to AWS Bedrock service using stored configuration
@@ -177,62 +245,106 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
      */
     const fetchCredentials = async () => {
       try {
-        // Get configuration from localStorage
-        const appConfig = JSON.parse(localStorage.getItem('appConfig'));
-        const bedrockConfig = appConfig.bedrock;
-        const strandsConfig = appConfig.strands;
-        
-        // Check if Strands Agent is enabled
-        setIsStrandsAgent(strandsConfig && strandsConfig.enabled);
-        
-        // Check if AgentCore Agent is enabled
-        const agentCoreConfig = appConfig.agentcore;
-        setIsAgentCoreAgent(agentCoreConfig && agentCoreConfig.enabled);
-        
-        // Fetch AWS authentication session
-        const session = await AWSAuth.fetchAuthSession();
-        
-        // Initialize Bedrock client if needed
-        if (!strandsConfig?.enabled && !agentCoreConfig?.enabled) {
+        // Resolver el módulo Auth (ensureAuthModule debe estar definido en el archivo)
+        let AuthModule;
+        try {
+          AuthModule = await ensureAuthModule();
+          console.log('AuthModule resolved:', AuthModule);
+        } catch (authErr) {
+          console.error('No se pudo resolver el módulo Auth:', authErr);
+          return; // abortar si no hay Auth disponible
+        }
+  
+        // Opcional: verificar que Amplify.configure() ya se ejecutó (ConfigComponent debería marcar localStorage)
+        if (localStorage.getItem('amplifyConfigured') !== '1') {
+          console.warn(
+            'Advertencia: Amplify.configure() parece no haberse ejecutado aún (localStorage.amplifyConfigured != 1). ' +
+            'Asegúrate de ejecutar configure antes.'
+          );
+        }
+  
+        // Cargar configuración de la app desde localStorage (manejo seguro)
+        let appConfig = {};
+        try {
+          appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
+        } catch (err) {
+          console.warn('appConfig en localStorage no es un JSON válido, usando {}', err);
+          appConfig = {};
+        }
+  
+        const bedrockConfig = appConfig.bedrock || {};
+        const strandsConfig = appConfig.strands || {};
+        const agentCoreConfig = appConfig.agentcore || {};
+  
+        setIsStrandsAgent(Boolean(strandsConfig.enabled));
+        setIsAgentCoreAgent(Boolean(agentCoreConfig.enabled));
+  
+        // Obtener credenciales temporales del usuario autenticado
+        let awsCreds;
+        if (AuthModule && typeof AuthModule.currentCredentials === 'function') {
+          awsCreds = await AuthModule.currentCredentials();
+        } else if (typeof Amplify !== 'undefined' && Amplify && Amplify.Auth && typeof Amplify.Auth.currentCredentials === 'function') {
+          // fallback por si Amplify.Auth está disponible
+          awsCreds = await Amplify.Auth.currentCredentials();
+        } else {
+          console.error('currentCredentials no disponible en el módulo Auth. Abortando inicialización de clientes.');
+          return;
+        }
+  
+        // Normalizar campos de credenciales (por si vienen en diferente forma)
+        const creds = {
+          accessKeyId: awsCreds.accessKeyId || awsCreds.AccessKeyId || awsCreds.identityId || undefined,
+          secretAccessKey: awsCreds.secretAccessKey || awsCreds.SecretAccessKey || awsCreds.secretKey || undefined,
+          sessionToken: awsCreds.sessionToken || awsCreds.SessionToken || undefined
+        };
+  
+        // Comprobar que hubo credenciales válidas
+        if (!creds.accessKeyId || !creds.secretAccessKey) {
+          console.error('Credenciales AWS incompletas o inválidas:', creds);
+          return;
+        }
+  
+        // Inicializar Bedrock client si aplica (Bedrock Agent Runtime)
+        if (!strandsConfig.enabled && !agentCoreConfig.enabled && bedrockConfig.region) {
           const newBedrockClient = new BedrockAgentRuntimeClient({
             region: bedrockConfig.region,
-            credentials: session.credentials
+            credentials: creds
           });
           setBedrockClient(newBedrockClient);
-          if (bedrockConfig.agentName && bedrockConfig.agentName.trim()) {
-            setAgentName({ value: bedrockConfig.agentName });
-          }
-        } 
-        // Initialize Lambda client for Strands Agent
-        else if (strandsConfig && strandsConfig.enabled && !agentCoreConfig?.enabled) {
+          if (bedrockConfig.agentName) setAgentName({ value: bedrockConfig.agentName });
+          console.log('Bedrock client inicializado en región', bedrockConfig.region);
+        }
+  
+        // Inicializar Lambda client para Strands si aplica
+        if (strandsConfig.enabled && strandsConfig.region && strandsConfig.lambdaArn) {
           const newLambdaClient = new LambdaClient({
             region: strandsConfig.region,
-            credentials: session.credentials
+            credentials: creds
           });
           setLambdaClient(newLambdaClient);
-          if (strandsConfig.agentName && strandsConfig.agentName.trim()) {
-            setAgentName({ value: strandsConfig.agentName });
-          }
+          if (strandsConfig.agentName) setAgentName({ value: strandsConfig.agentName });
+          console.log('Lambda client (Strands) inicializado en región', strandsConfig.region);
         }
-
-        // Initialize AgentCore client if enabled
-        if (agentCoreConfig && agentCoreConfig.enabled && agentCoreConfig.region) {
+  
+        // Inicializar AgentCore client si aplica
+        if (agentCoreConfig.enabled && agentCoreConfig.region && agentCoreConfig.agentArn) {
           const newAgentCoreClient = new BedrockAgentCoreClient({
             region: agentCoreConfig.region,
-            credentials: session.credentials
+            credentials: creds
           });
           setAgentCoreClient(newAgentCoreClient);
-          if (agentCoreConfig.agentName && agentCoreConfig.agentName.trim()) {
-            setAgentName({ value: agentCoreConfig.agentName });
-          }
+          if (agentCoreConfig.agentName) setAgentName({ value: agentCoreConfig.agentName });
+          console.log('AgentCore client inicializado en región', agentCoreConfig.region);
         }
+  
       } catch (error) {
         console.error('Error fetching credentials:', error);
       }
     };
-
+  
     fetchCredentials();
-  }, []);
+  }, []); // mantiene la dependencia vacía o la que tu diseño requiera
+  
 
   useEffect(() => {
     if ((bedrockClient || lambdaClient || agentCoreClient) && !sessionId) {
@@ -272,9 +384,16 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
         // Handle Bedrock Agent
         if (!isStrandsAgent && bedrockClient) {
           const bedrockConfig = appConfig.bedrock;
+          // obtener credenciales para incluir en atributos si lo necesitas
+          const awsCreds = await Amplify.Auth.currentCredentials();
           const sessionAttributes = {
-            aws_session: await AWSAuth.fetchAuthSession()
+            aws_session: {
+              accessKeyId: awsCreds.accessKeyId,
+              secretAccessKey: awsCreds.secretAccessKey,
+              sessionToken: awsCreds.sessionToken
+            }
           };
+
 
           const command = new InvokeAgentCommand({
             agentId: bedrockConfig.agentId,
@@ -416,7 +535,18 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
 
   const handleLogout = async () => {
     try {
-      await AWSAuth.signOut();
+      try {
+        const AuthModule = await ensureAuthModule();
+        if (AuthModule && typeof AuthModule.signOut === 'function') {
+          await AuthModule.signOut();
+        } else if (Amplify && Amplify.Auth && typeof Amplify.Auth.signOut === 'function') {
+          await Amplify.Auth.signOut();
+        } else {
+          console.warn('signOut no disponible en el módulo Auth');
+        }
+      } catch (err) {
+        console.error('Error durante logout (no se resolvió Auth):', err);
+      }
       onLogout();
     } catch (error) {
       console.error('Error signing out: ', error);
