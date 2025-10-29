@@ -188,6 +188,24 @@ Resources:
       Description: "Alias created by SAM template"
     DependsOn: BedrockAgent
 
+
+
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-amplify-service-role-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - amplify.amazonaws.com
+                - codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
   ### -------------------- Amplify App (IaC) — con BuildSpec para Vite --------------------
   AmplifyApp:
     Type: AWS::Amplify::App
@@ -230,7 +248,7 @@ Resources:
           phases:
             preBuild:
               commands:
-                - npm ci
+                - if [ -f package-lock.json ]; then npm ci; else npm install; fi
             build:
               commands:
                 - npm run build
@@ -254,22 +272,6 @@ Resources:
     DependsOn: AmplifyApp
 
 
-  ### IAM Role que Amplify asumirá durante builds/deploy (Service Role)
-  AmplifyServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${EnvironmentName}-amplify-service-role-${AWS::AccountId}"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - amplify.amazonaws.com
-            Action: sts:AssumeRole
-      # Para pruebas rápidas puedes usar AdministratorAccess; en producción limita esto.
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
 
 
 

@@ -196,6 +196,22 @@ Resources:
         Fn::Sub: ${EnvironmentName}-alias
       Description: Alias created by SAM template
     DependsOn: BedrockAgent
+  AmplifyServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: ${EnvironmentName}-amplify-service-role-${AWS::AccountId}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - amplify.amazonaws.com
+            - codebuild.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
   AmplifyApp:
     Type: AWS::Amplify::App
     Properties:
@@ -251,9 +267,9 @@ Resources:
           - BedrockAgent
           - AgentId
       BuildSpec: "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n\
-        \        - npm ci\n    build:\n      commands:\n        - npm run build\n\
-        \  artifacts:\n    baseDirectory: dist\n    files:\n      - \"**/*\"\n  cache:\n\
-        \    paths:\n      - node_modules/**/*\n"
+        \        - if [ -f package-lock.json ]; then npm ci; else npm install; fi\n\
+        \    build:\n      commands:\n        - npm run build\n  artifacts:\n    baseDirectory:\
+        \ dist\n    files:\n      - \"**/*\"\n  cache:\n    paths:\n      - node_modules/**/*\n"
   AmplifyBranch:
     Type: AWS::Amplify::Branch
     Properties:
@@ -271,21 +287,6 @@ Resources:
       EnablePerformanceMode: false
       Stage: PRODUCTION
     DependsOn: AmplifyApp
-  AmplifyServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName:
-        Fn::Sub: ${EnvironmentName}-amplify-service-role-${AWS::AccountId}
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - amplify.amazonaws.com
-          Action: sts:AssumeRole
-      ManagedPolicyArns:
-      - arn:aws:iam::aws:policy/AdministratorAccess
 Outputs:
   UserPoolId:
     Description: Cognito User Pool Id
