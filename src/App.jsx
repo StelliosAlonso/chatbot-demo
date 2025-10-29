@@ -120,7 +120,7 @@ const AuthenticatedComponent = ({ onEditConfigClick }) => {
   return (
     <div>
       <div className="centered-container">
-        <Authenticator hideSignUp={true} components={components}>
+        <Authenticator components={components}>
           {isAuthenticating ? (
             <div>Authenticating...</div>
           ) : user ? (
