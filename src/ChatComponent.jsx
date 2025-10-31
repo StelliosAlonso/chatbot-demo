@@ -24,7 +24,8 @@ import PropTypes from 'prop-types';
 import * as Amplify from 'aws-amplify'
 const { Auth } = Amplify;
 
-// import * as AmplifyLib from 'aws-amplify';
+import { fromCognitoIdentityPool } from "@aws-sdk/credential-providers";
+import { CognitoIdentityClient } from "@aws-sdk/client-cognito-identity";
 
 
 
@@ -233,78 +234,261 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   };
 
 
-  
-  /**
-   * Effect hook to initialize AWS Bedrock client and fetch credentials
-   * Sets up the connection to AWS Bedrock service using stored configuration
-   */
+
+  // -------------------------------
+  // Initialize Amplify from appConfig (async, robusto)
+  // -------------------------------
+  const initializeAmplifyFromAppConfig = async (appConfig) => {
+    try {
+      if (localStorage.getItem('amplifyConfigured') === '1') {
+        console.log('Amplify ya marcado como configurado (flag en localStorage).');
+        return true;
+      }
+
+      const cognito = (appConfig && appConfig.cognito) || {};
+      if (!cognito || !cognito.region || !cognito.userPoolId || !cognito.userPoolClientId) {
+        console.warn('initializeAmplifyFromAppConfig: faltan campos Cognito en appConfig, no configurando Amplify aquí.');
+        return false;
+      }
+
+      // Intentar llamar a configure de distintas formas (Amplify, Amplify.default, import dinámico)
+      const cfg = {
+        Auth: {
+          region: cognito.region,
+          userPoolId: cognito.userPoolId,
+          userPoolWebClientId: cognito.userPoolClientId,
+          identityPoolId: cognito.identityPoolId || undefined
+        }
+      };
+
+      // 1) Amplify.configure si existe
+      if (typeof Amplify !== 'undefined' && typeof Amplify.configure === 'function') {
+        Amplify.configure(cfg);
+        localStorage.setItem('amplifyConfigured', '1');
+        console.log('Amplify configurado vía Amplify.configure()');
+        return true;
+      }
+
+      // 2) Amplify.default.configure (algunos bundlers)
+      if (typeof Amplify !== 'undefined' && Amplify && Amplify.default && typeof Amplify.default.configure === 'function') {
+        Amplify.default.configure(cfg);
+        localStorage.setItem('amplifyConfigured', '1');
+        console.log('Amplify configurado vía Amplify.default.configure()');
+        return true;
+      }
+
+      // 3) import dinámico de 'aws-amplify' y usar configure si está
+      try {
+        const mod = await import('aws-amplify');
+        if (mod) {
+          if (typeof mod.configure === 'function') {
+            mod.configure(cfg);
+            localStorage.setItem('amplifyConfigured', '1');
+            console.log('Amplify configurado vía import("aws-amplify").configure()');
+            return true;
+          }
+          if (mod.default && typeof mod.default.configure === 'function') {
+            mod.default.configure(cfg);
+            localStorage.setItem('amplifyConfigured', '1');
+            console.log('Amplify configurado vía import("aws-amplify").default.configure()');
+            return true;
+          }
+        }
+      } catch (e) {
+        console.debug('import("aws-amplify") no devolvió configure, intentando siguientes fallbacks...', e);
+      }
+
+      console.warn('No pude localizar una función configure en aws-amplify. Si usas Amplify v6 modular, configura Amplify en tu entrypoint (index.jsx) con las APIs modulares o instala la versión que exponga configure.');
+      return false;
+    } catch (err) {
+      console.warn('initializeAmplifyFromAppConfig fallo:', err);
+      return false;
+    }
+  };
+
+
+  // -------------------------------
+  // getAwsCredentials (mejorado, añade fetchAuthSession fallback y logs)
+  // -------------------------------
+  const getAwsCredentials = async (AuthModule, appConfig = {}) => {
+    // 1) Intentar currentCredentials() si está disponible
+    try {
+      if (AuthModule && typeof AuthModule.currentCredentials === "function") {
+        const credsResult = await AuthModule.currentCredentials();
+        console.debug('getAwsCredentials: currentCredentials() result:', credsResult);
+        const raw = credsResult?.credentials ? credsResult.credentials : credsResult;
+        return {
+          accessKeyId: raw?.accessKeyId || raw?.AccessKeyId || raw?.access_key_id,
+          secretAccessKey: raw?.secretAccessKey || raw?.SecretAccessKey || raw?.secret_key,
+          sessionToken: raw?.sessionToken || raw?.SessionToken || raw?.token || raw?.session_token
+        };
+      }
+    } catch (e) {
+      console.debug('currentCredentials() falló o no disponible:', e);
+    }
+
+    // Dentro de getAwsCredentials, reemplaza la sección que usa fetchAuthSession/Identity Pool
+    try {
+      const cognitoCfg = (appConfig && appConfig.cognito) || {};
+      const identityPoolId = cognitoCfg.identityPoolId;
+      const region = cognitoCfg.region;
+      const userPoolId = cognitoCfg.userPoolId;
+
+      if (!region) {
+        throw new Error('Falta region en appConfig.cognito; no puedo continuar con Identity Pool / fetchAuthSession.');
+      }
+
+      // PRIMERO: intentar fetchAuthSession() y si ya trae "credentials" temporales, úsalos directamente.
+      try {
+        if (AuthModule && typeof AuthModule.fetchAuthSession === 'function') {
+          const f = await AuthModule.fetchAuthSession();
+          console.debug('getAwsCredentials: fetchAuthSession() =>', f);
+
+          // Si fetchAuthSession ya trae credentials temporales, úsalas directamente
+          if (f && f.credentials && f.credentials.accessKeyId && f.credentials.secretAccessKey) {
+            console.log('getAwsCredentials: usando credentials devueltas por fetchAuthSession() (evitando Identity Pool).');
+            return {
+              accessKeyId: f.credentials.accessKeyId,
+              secretAccessKey: f.credentials.secretAccessKey,
+              sessionToken: f.credentials.sessionToken || f.credentials.sessionToken
+            };
+          }
+
+          // Si no hay credentials, extraer idToken para Identity Pool
+          if (f?.tokens?.idToken) {
+            // idToken puede ser un objeto; extraer string de forma segura
+            const tokenObj = f.tokens.idToken;
+            let idTokenStr = null;
+            if (typeof tokenObj === 'string') idTokenStr = tokenObj;
+            else if (tokenObj?.jwtToken) idTokenStr = tokenObj.jwtToken;
+            else if (typeof tokenObj.toString === 'function') idTokenStr = tokenObj.toString();
+            if (idTokenStr) {
+              // Asegurarnos de pasar una función que devuelva el token (forma segura para fromCognitoIdentityPool)
+              const provider = fromCognitoIdentityPool({
+                client: new CognitoIdentityClient({ region }),
+                identityPoolId,
+                logins: {
+                  // pasar función que retorna el token string — evita tokenOrProvider not a function
+                  [`cognito-idp.${region}.amazonaws.com/${userPoolId}`]: async () => idTokenStr
+                }
+              });
+              const creds = await provider();
+              console.debug('getAwsCredentials: credentials derivadas desde Identity Pool =>', creds);
+              return {
+                accessKeyId: creds.accessKeyId,
+                secretAccessKey: creds.secretAccessKey,
+                sessionToken: creds.sessionToken
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.debug('AuthModule.fetchAuthSession() falló o no devolvió creds útiles:', err);
+      }
+
+      // Si llegamos aquí y necesitamos seguir con el flujo habitual pero faltan datos:
+      if (!identityPoolId || !userPoolId) {
+        throw new Error('Faltan identityPoolId / userPoolId en appConfig.cognito; no se puede derivar credenciales via Identity Pool.');
+      }
+      // (el resto del flujo Identity Pool se mantiene más abajo si quieres mantenerlo)
+    } catch (err) {
+      console.debug('Derivación por Identity Pool (o fetchAuthSession) falló:', err);
+    }
+
+
+    // 3) último recurso: si Amplify.Auth estuvo disponible globalmente intenta su currentCredentials
+    try {
+      if (typeof Amplify !== 'undefined' && Amplify && Amplify.Auth && typeof Amplify.Auth.currentCredentials === 'function') {
+        const rc = await Amplify.Auth.currentCredentials();
+        console.debug('getAwsCredentials: fallback Amplify.Auth.currentCredentials() =>', rc);
+        const raw = rc?.credentials ? rc.credentials : rc;
+        return {
+          accessKeyId: raw?.accessKeyId || raw?.AccessKeyId,
+          secretAccessKey: raw?.secretAccessKey || raw?.SecretAccessKey,
+          sessionToken: raw?.sessionToken || raw?.SessionToken
+        };
+      }
+    } catch (err) {
+      console.debug('Fallback Amplify.Auth.currentCredentials() falló:', err);
+    }
+
+    // Si llegamos aquí, falló todo
+    throw new Error('No fue posible obtener credenciales AWS con los métodos disponibles.');
+  };
+
+
+  // -------------------------------
+  // useEffect(fetchCredentials) actualizado (espera initializeAmplifyFromAppConfig)
+  // -------------------------------
   useEffect(() => {
-    /**
-     * Fetches AWS credentials and initializes Bedrock client
-     * Retrieves configuration from localStorage and establishes AWS session
-     */
+    // Esperar al user (prop). Si no hay user, no intentar obtener credenciales.
+    if (!user) {
+      console.log('fetchCredentials: esperando prop user antes de intentar obtener credenciales.');
+      return;
+    }
+
     const fetchCredentials = async () => {
       try {
-        // Resolver el módulo Auth (ensureAuthModule debe estar definido en el archivo)
+        // Resolver el módulo Auth
         let AuthModule;
         try {
           AuthModule = await ensureAuthModule();
           console.log('AuthModule resolved:', AuthModule);
+          console.log('AuthModule keys:', Object.keys(AuthModule || {}));
         } catch (authErr) {
           console.error('No se pudo resolver el módulo Auth:', authErr);
           return; // abortar si no hay Auth disponible
         }
-  
-        // Opcional: verificar que Amplify.configure() ya se ejecutó (ConfigComponent debería marcar localStorage)
-        if (localStorage.getItem('amplifyConfigured') !== '1') {
-          console.warn(
-            'Advertencia: Amplify.configure() parece no haberse ejecutado aún (localStorage.amplifyConfigured != 1). ' +
-            'Asegúrate de ejecutar configure antes.'
-          );
-        }
-  
-        // Cargar configuración de la app desde localStorage (manejo seguro)
+
+        // Cargar configuración app y, si es necesario, inicializar Amplify desde ella (fallback)
         let appConfig = {};
         try {
           appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
         } catch (err) {
-          console.warn('appConfig en localStorage no es un JSON válido, usando {}', err);
+          console.warn('appConfig en localStorage no es JSON válido, usando {}', err);
           appConfig = {};
         }
-  
+
+        // Intentar configurar Amplify (async) si no fue configurado
+        try {
+          const ok = await initializeAmplifyFromAppConfig(appConfig);
+          console.log('initializeAmplifyFromAppConfig result:', ok);
+        } catch (err) {
+          console.warn('initializeAmplifyFromAppConfig threw:', err);
+        }
+
         const bedrockConfig = appConfig.bedrock || {};
         const strandsConfig = appConfig.strands || {};
         const agentCoreConfig = appConfig.agentcore || {};
-  
+
         setIsStrandsAgent(Boolean(strandsConfig.enabled));
         setIsAgentCoreAgent(Boolean(agentCoreConfig.enabled));
-  
-        // Obtener credenciales temporales del usuario autenticado
+
+        console.log('appConfig (from localStorage):', appConfig);
+        console.log('user prop:', user);
+
+        // Obtener credenciales (usa la función robusta que intenta varios métodos)
         let awsCreds;
-        if (AuthModule && typeof AuthModule.currentCredentials === 'function') {
-          awsCreds = await AuthModule.currentCredentials();
-        } else if (typeof Amplify !== 'undefined' && Amplify && Amplify.Auth && typeof Amplify.Auth.currentCredentials === 'function') {
-          // fallback por si Amplify.Auth está disponible
-          awsCreds = await Amplify.Auth.currentCredentials();
-        } else {
-          console.error('currentCredentials no disponible en el módulo Auth. Abortando inicialización de clientes.');
+        try {
+          awsCreds = await getAwsCredentials(AuthModule, appConfig);
+        } catch (credErr) {
+          console.error('No se pudieron obtener credenciales AWS:', credErr);
           return;
         }
-  
-        // Normalizar campos de credenciales (por si vienen en diferente forma)
+
+        // Normalizar campos de credenciales
         const creds = {
-          accessKeyId: awsCreds.accessKeyId || awsCreds.AccessKeyId || awsCreds.identityId || undefined,
-          secretAccessKey: awsCreds.secretAccessKey || awsCreds.SecretAccessKey || awsCreds.secretKey || undefined,
-          sessionToken: awsCreds.sessionToken || awsCreds.SessionToken || undefined
+          accessKeyId: awsCreds.accessKeyId,
+          secretAccessKey: awsCreds.secretAccessKey,
+          sessionToken: awsCreds.sessionToken
         };
-  
-        // Comprobar que hubo credenciales válidas
+
         if (!creds.accessKeyId || !creds.secretAccessKey) {
           console.error('Credenciales AWS incompletas o inválidas:', creds);
           return;
         }
-  
-        // Inicializar Bedrock client si aplica (Bedrock Agent Runtime)
+
+        // Inicializar Bedrock client (si aplica)
         if (!strandsConfig.enabled && !agentCoreConfig.enabled && bedrockConfig.region) {
           const newBedrockClient = new BedrockAgentRuntimeClient({
             region: bedrockConfig.region,
@@ -314,8 +498,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
           if (bedrockConfig.agentName) setAgentName({ value: bedrockConfig.agentName });
           console.log('Bedrock client inicializado en región', bedrockConfig.region);
         }
-  
-        // Inicializar Lambda client para Strands si aplica
+
+        // Lambda client (Strands)
         if (strandsConfig.enabled && strandsConfig.region && strandsConfig.lambdaArn) {
           const newLambdaClient = new LambdaClient({
             region: strandsConfig.region,
@@ -325,8 +509,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
           if (strandsConfig.agentName) setAgentName({ value: strandsConfig.agentName });
           console.log('Lambda client (Strands) inicializado en región', strandsConfig.region);
         }
-  
-        // Inicializar AgentCore client si aplica
+
+        // AgentCore client
         if (agentCoreConfig.enabled && agentCoreConfig.region && agentCoreConfig.agentArn) {
           const newAgentCoreClient = new BedrockAgentCoreClient({
             region: agentCoreConfig.region,
@@ -336,14 +520,18 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
           if (agentCoreConfig.agentName) setAgentName({ value: agentCoreConfig.agentName });
           console.log('AgentCore client inicializado en región', agentCoreConfig.region);
         }
-  
+
       } catch (error) {
         console.error('Error fetching credentials:', error);
       }
     };
-  
+
     fetchCredentials();
-  }, []); // mantiene la dependencia vacía o la que tu diseño requiera
+    // Re-ejecutar si cambia user (login/logout)
+  }, [user]);
+
+  
+  
   
 
   useEffect(() => {
@@ -367,171 +555,143 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
    */
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // Only proceed if we have a message and active session
-    if (newMessage.trim() && sessionId) {
-      const appConfig = JSON.parse(localStorage.getItem('appConfig'));
-      
-      // Clear input field
-      setNewMessage('');
-      // Create message object with user information
-      const userMessage = { text: newMessage, sender: user.username };
-      setMessages(prevMessages => [...prevMessages, userMessage]);
-      setIsAgentResponding(true); // Set to true when starting to wait for response
-
+    if (!newMessage.trim() || !sessionId) return;
+  
+    // Lee appConfig si lo necesitas para otras cosas (no obligatorio aquí)
+    const appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
+  
+    // Helper interno: envia mensaje al API Gateway del agente (hardcode endpoint)
+    const sendToAgentEndpoint = async ({ sessionId, message }) => {
+      const endpoint = 'https://z2a5hwfq92.execute-api.us-east-1.amazonaws.com/production/chat';
+      const headers = { 'Content-Type': 'application/json' };
+  
+      // Intento de extraer un idToken de Cognito/Amplify para Authorization Bearer (opcional)
       try {
-        let agentMessage;
-        
-        // Handle Bedrock Agent
-        if (!isStrandsAgent && bedrockClient) {
-          const bedrockConfig = appConfig.bedrock;
-          // obtener credenciales para incluir en atributos si lo necesitas
-          const awsCreds = await Amplify.Auth.currentCredentials();
-          const sessionAttributes = {
-            aws_session: {
-              accessKeyId: awsCreds.accessKeyId,
-              secretAccessKey: awsCreds.secretAccessKey,
-              sessionToken: awsCreds.sessionToken
-            }
-          };
-
-
-          const command = new InvokeAgentCommand({
-            agentId: bedrockConfig.agentId,
-            agentAliasId: bedrockConfig.agentAliasId,
-            sessionId: sessionId,
-            endSession: false,
-            enableTrace: true,
-            inputText: newMessage,
-            promptSessionAttributes: sessionAttributes
-          });
-
-          let completion = "";
-          const response = await bedrockClient.send(command);
-
-          if (response.completion === undefined) {
-            throw new Error("Completion is undefined");
-          }
-
-          for await (const chunkEvent of response.completion) {
-            if (chunkEvent.trace) {
-              console.log("Trace: ", chunkEvent.trace);
-              tasksCompleted.count++;
-              if (typeof (chunkEvent.trace.trace.failureTrace) !== 'undefined') {
-                throw new Error(chunkEvent.trace.trace.failureTrace.failureReason);
+        const AuthModule = await ensureAuthModule().catch(() => null);
+        if (AuthModule) {
+          let token = null;
+          try {
+            // distintos formatos según la versión de Amplify
+            if (typeof AuthModule.currentSession === 'function') {
+              // Amplify vX possible shape
+              const sess = await AuthModule.currentSession();
+              token = (sess?.getIdToken && typeof sess.getIdToken === 'function' && sess.getIdToken().getJwtToken && sess.getIdToken().getJwtToken())
+                || sess?.idToken?.jwtToken
+                || (sess?.tokens && sess.tokens.idToken);
+            } else if (typeof AuthModule.fetchAuthSession === 'function') {
+              // Otra posible API
+              const f = await AuthModule.fetchAuthSession();
+              token = f?.tokens?.idToken || f?.idToken?.jwtToken || f?.idToken;
+            } else if (AuthModule?.currentAuthenticatedUser) {
+              // Fallback: obtener sesión desde currentAuthenticatedUser (menos habitual)
+              try {
+                const cu = await AuthModule.currentAuthenticatedUser();
+                // some flows attach signInUserSession
+                token = cu?.signInUserSession?.idToken?.jwtToken || cu?.idToken?.jwtToken;
+              } catch (e) {
+                // ignore
               }
-
-              if (chunkEvent.trace.trace.orchestrationTrace.rationale) {
-                tasksCompleted.latestRationale = chunkEvent.trace.trace.orchestrationTrace.rationale.text;
-                scrollToBottom();
-              }
-              setTasksCompleted({ ...tasksCompleted });
-
-            } else if (chunkEvent.chunk) {
-              const chunk = chunkEvent.chunk;
-              const decodedResponse = new TextDecoder("utf-8").decode(chunk.bytes);
-              completion += decodedResponse;
             }
+          } catch (err) {
+            console.debug('No se pudo extraer idToken del AuthModule:', err);
           }
-
-          console.log('Full completion:', completion);
-          agentMessage = { text: completion, sender: agentName.value };
-        } 
-        // Handle Strands Agent
-        else if (isStrandsAgent && lambdaClient) {
-          const strandsConfig = appConfig.strands;
-          
-          // Prepare payload for Lambda function
-          const payload = {
-            query: newMessage
-          };
-          
-          // Extract Lambda function name from ARN
-          const lambdaArn = strandsConfig.lambdaArn;
-          
-          const command = new InvokeCommand({
-            FunctionName: lambdaArn,
-            Payload: JSON.stringify(payload),
-            InvocationType: 'RequestResponse'
-          });
-          
-          const response = await lambdaClient.send(command);
-          
-          // Process Lambda response
-          const responseBody = new TextDecoder().decode(response.Payload);
-          const parsedResponse = JSON.parse(responseBody);
-          
-          console.log('Lambda response:', parsedResponse);
-          
-          // Extract the response text from the Lambda result
-          let responseText;
-          if (parsedResponse.body) {
-            const body = JSON.parse(parsedResponse.body);
-            responseText = body.response;
-          } else if (parsedResponse.response) {
-            responseText = parsedResponse.response;
-          } else {
-            responseText = "Sorry, I couldn't process your request.";
+  
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+            console.debug('sendToAgentEndpoint: Authorization header added (masked).');
           }
-          
-          agentMessage = { text: responseText, sender: agentName.value };
         }
-        // Handle AgentCore Agent
-        else if (isAgentCoreAgent && agentCoreClient) {
-          const agentCoreConfig = appConfig.agentcore;
-          
-          const command = new InvokeAgentRuntimeCommand({
-            agentRuntimeArn: agentCoreConfig.agentArn,
-            runtimeSessionId: sessionId,
-            payload: JSON.stringify({ prompt: newMessage })
-          });
-
-          const response = await agentCoreClient.send(command);
-          
-          // Handle ReadableStream response
-          let responseBody = '';
-          if (response.response && response.response.getReader) {
-            const reader = response.response.getReader();
-            const decoder = new TextDecoder();
-            let done = false;
-            
-            while (!done) {
-              const { value, done: streamDone } = await reader.read();
-              done = streamDone;
-              if (value) {
-                responseBody += decoder.decode(value, { stream: true });
-              }
-            }
-          } else {
-            responseBody = response.response || '';
-          }
-          
-          console.log('AgentCore raw response:', responseBody);
-          
-          const parsedResponse = JSON.parse(responseBody);
-          const responseText = parsedResponse.result || "Sorry, I couldn't process your request.";
-          agentMessage = { text: responseText, sender: agentName.value };
-        } else {
-          throw new Error("No agent client available");
-        }
-
-        setMessages(prevMessages => [...prevMessages, agentMessage]);
-        // Store the new messages
-        storeMessages(sessionId, [userMessage, agentMessage]);
-
       } catch (err) {
-        console.error('Error invoking agent:', err);
-
-        let errReason = "**"+String(err).toString()+"**";
-
-        const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
-        setMessages(prevMessages => [...prevMessages, errorMessage]);
-        storeMessages(sessionId, [userMessage, errorMessage]);
-      } finally {
-        setIsAgentResponding(false); // Set to false when response is received
-        setTasksCompleted({ count: 0, latestRationale: '' });
+        console.debug('sendToAgentEndpoint: ensureAuthModule falló (no Authorization).', err);
       }
+  
+      // Construir body que espera el endpoint
+      const body = {
+        sessionId,
+        message,
+        user: user?.username || 'anonymous'
+      };
+  
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body)
+      });
+  
+      if (!resp.ok) {
+        // intentar leer cuerpo para diagnóstico
+        const txt = await resp.text().catch(() => '');
+        throw new Error(`Agent API error ${resp.status}: ${txt}`);
+      }
+  
+      // parseo seguro de JSON
+      let data = null;
+      try {
+        data = await resp.json();
+      } catch (err) {
+        console.warn('sendToAgentEndpoint: respuesta no es JSON, devolviendo texto crudo.', err);
+        const txt = await resp.text().catch(() => '');
+        return txt || '';
+      }
+  
+      // Soportar varias formas de respuesta comunes
+      const reply = data?.reply || data?.response || data?.text || data?.message || (typeof data === 'string' ? data : JSON.stringify(data));
+      return reply;
+    };
+  
+    // Helper para maskear secretos en logs si lo necesitas
+    const mask = (s = '') => {
+      if (!s) return '(empty)';
+      const str = String(s);
+      if (str.length <= 8) return `${str.slice(0, 2)}...${str.slice(-2)}`;
+      return `${str.slice(0, 4)}...${str.slice(-4)}`;
+    };
+  
+    // Clear input field (UX)
+    const originalMessage = newMessage;
+    setNewMessage('');
+    const userMessage = { text: originalMessage, sender: user.username };
+    setMessages(prev => [...prev, userMessage]);
+    setIsAgentResponding(true);
+  
+    try {
+      // Invocar endpoint del agente
+      console.groupCollapsed('handleSubmit -> invoking external agent endpoint');
+      console.log('sessionId:', sessionId);
+      console.log('user:', user?.username);
+      console.log('message preview:', originalMessage.slice(0, 200));
+  
+      const replyText = await sendToAgentEndpoint({ sessionId, message: originalMessage });
+  
+      console.log('agent reply (preview):', (typeof replyText === 'string' ? replyText.slice(0, 500) : JSON.stringify(replyText).slice(0, 500)));
+  
+      const agentMessage = { text: replyText, sender: agentName.value || 'Agent' };
+  
+      // Append agent message and persist both user+agent messages
+      setMessages(prev => [...prev, agentMessage]);
+      storeMessages(sessionId, [userMessage, agentMessage]);
+  
+      console.groupEnd();
+    } catch (err) {
+      console.error('Error invoking external agent endpoint:', {
+        name: err?.name,
+        message: err?.message,
+        stack: err?.stack
+      });
+  
+      const errReason = "**" + String(err) + "**";
+      const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
+      setMessages(prev => [...prev, errorMessage]);
+      storeMessages(sessionId, [userMessage, errorMessage]);
+    } finally {
+      setIsAgentResponding(false);
+      // reset any task-tracking UI state you used antes
+      setTasksCompleted({ count: 0, latestRationale: '' });
     }
   };
+  
+
+  
 
   const handleLogout = async () => {
     try {
