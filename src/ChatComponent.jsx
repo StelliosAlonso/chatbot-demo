@@ -159,18 +159,33 @@ const handleConfirmCreate = async () => {
   try {
     setLoadingNewChat(true);
 
-    // Resolver módulo Auth
-    const AuthModule = await ensureAuthModule();
+    let email = "desconocido";
 
-    // Obtener usuario actual
-    let userData;
+      // Resolver el módulo Auth
+      let AuthModule;
+      try {
+        AuthModule = await ensureAuthModule();
+        console.log('AuthModule resolved:', AuthModule);
+        console.log('AuthModule keys:', Object.keys(AuthModule || {}));
+      } catch (authErr) {
+        console.error('No se pudo resolver el módulo Auth:', authErr);
+        return; // abortar si no hay Auth disponible
+      }
+
+        // 🟢 Obtener y mostrar el email del usuario autenticado
     try {
-      userData = await AuthModule.currentAuthenticatedUser?.() || null;
-    } catch {
-      userData = null;
+      const { getCurrentUser } = AuthModule;
+      if (getCurrentUser) {
+        const user = await getCurrentUser();
+        email = user?.signInDetails?.loginId || user?.username || "desconocido";
+        console.log("📧 Email del usuario autenticado:", email);
+      } else {
+        console.warn("getCurrentUser no está disponible en AuthModule.");
+      }
+    } catch (emailErr) {
+      console.error("❌ Error obteniendo email del usuario:", emailErr);
     }
 
-    const email = userData?.attributes?.email || userData?.username || "desconocido";
 
     // Obtener token de sesión actual
     let token;
