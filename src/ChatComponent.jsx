@@ -15,7 +15,8 @@ import {
   Button,
   Modal,
   SpaceBetween,
-  TopNavigation
+  TopNavigation,
+  Input,
 } from "@cloudscape-design/components";
 import PropTypes from 'prop-types';
 
@@ -48,6 +49,10 @@ import './ChatComponent.css';
  * @param {Function} props.onConfigEditorClick - Callback for configuration editor
  * @returns {JSX.Element} The chat interface
  */
+
+// --------------------------------------------- [ENV CONFIGURATION] ---------------------------------------------
+
+
 const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   // AWS Bedrock client instance for agent communication
   const [bedrockClient, setBedrockClient] = useState(null);
@@ -83,6 +88,16 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+
+    // Estado para controlar el modal de nuevo chat
+  const [showNewChatModal, setShowNewChatModal] = useState(false);
+
+  // Estado para el nombre del chat
+  const [chatName, setChatName] = useState("");
+
+  // Estado para indicar si está cargando la creación del chat
+  const [loadingNewChat, setLoadingNewChat] = useState(false);
 
   /**
  * Shows the modal for confirming conversation clearing
@@ -135,6 +150,70 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     localStorage.setItem(`messages_${newSessionId}`, JSON.stringify([]));
     console.log('New session created:', newSessionId);
   }, []);
+
+const API_URL = import.meta.env.VITE_CHAT_API_URL;
+
+const handleConfirmCreate = async () => {
+  if (!chatName.trim()) return alert("Por favor ingresa un nombre para el chat.");
+
+  try {
+    setLoadingNewChat(true);
+
+    // Resolver módulo Auth
+    const AuthModule = await ensureAuthModule();
+
+    // Obtener usuario actual
+    let userData;
+    try {
+      userData = await AuthModule.currentAuthenticatedUser?.() || null;
+    } catch {
+      userData = null;
+    }
+
+    const email = userData?.attributes?.email || userData?.username || "desconocido";
+
+    // Obtener token de sesión actual
+    let token;
+    if (typeof AuthModule.currentSession === 'function') {
+      const session = await AuthModule.currentSession();
+      token = session?.getIdToken?.()?.getJwtToken?.() || null;
+    } else if (typeof AuthModule.fetchAuthSession === 'function') {
+      const session = await AuthModule.fetchAuthSession();
+      token = session?.tokens?.idToken || null;
+    }
+
+    if (!token) {
+      console.warn('No se pudo obtener token de sesión. La llamada a la API podría fallar.');
+    }
+
+    // Llamada a la API Gateway
+    const response = await fetch(API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: token || "",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ chatName, email }),
+    });
+
+    if (!response.ok) throw new Error("Error al crear el chat en la API");
+
+    const data = await response.json();
+    console.log("✅ Chat creado exitosamente:", data);
+
+    setShowNewChatModal(false);
+    setChatName("");
+
+    // Crear sesión local para este chat
+    createNewSession();
+
+  } catch (error) {
+    console.error("❌ Error al crear el chat:", error);
+    alert("Hubo un problema creando el chat.");
+  } finally {
+    setLoadingNewChat(false);
+  }
+};
 
   /**
    * Retrieves messages for a specific chat session from localStorage
@@ -734,7 +813,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                   title: "Start a new conversation",
                   ariaLabel: "Start a new conversation",
                   disableUtilityCollapse: true,
-                  onClick: () => createNewSession()
+                  onClick: () => setShowNewChatModal(true)
                 },
                 //This is the settings handler
                 {
@@ -887,6 +966,42 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
             </Form>
 
           </form>
+
+          {/* 🟢 Modal para crear nuevo chat */}
+          <Modal
+            onDismiss={() => setShowNewChatModal(false)}
+            visible={showNewChatModal}
+            header="Crear nuevo chat"
+            closeAriaLabel="Cerrar"
+            footer={
+              <Box float="right">
+                <SpaceBetween direction="horizontal" size="xs">
+                  <Button variant="link" onClick={() => setShowNewChatModal(false)}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    variant="primary"
+                    loading={loadingNewChat}
+                    onClick={handleConfirmCreate}
+                  >
+                    Crear chat
+                  </Button>
+                </SpaceBetween>
+              </Box>
+            }
+          >
+            <FormField
+              label="Nombre del nuevo chat"
+              description="Este nombre se usará para identificar tu conversación en la base de datos."
+            >
+              <Input
+                placeholder="Escribe un nombre..."
+                value={chatName}
+                onChange={(e) => setChatName(e.detail.value)}
+              />
+            </FormField>
+          </Modal>
+
           {/* Clear Data Confirmation Modal */}
 
           <Modal
