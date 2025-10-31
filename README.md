@@ -324,17 +324,20 @@ AWS responsibilities and liabilities to its customers are controlled by AWS agre
 - Ravi Kumar
 - Ankush Goyal
 
-flowchart TD
+### 🧠 Flujo del Chat (Front + AWS Agent)
 
+Este diagrama describe el flujo del mensaje desde que el usuario lo envía hasta que el agente AWS responde.
+
+```mermaid
+flowchart TD
 A[Usuario escribe mensaje] --> B[onSendMessage()]
 B --> C[Guardar mensaje en estado local]
 C --> D[sendMessageToAgent()]
-
 D --> E[Llama a API AWS Lambda / Bedrock]
 E --> F[Servicio procesa mensaje]
 F --> G[Agente genera respuesta]
-
 G --> H[Devolver respuesta a front-end]
 H --> I[Actualizar estado mensajes]
 I --> J[React vuelve a renderizar UI]
 J --> K[Mensaje del agente aparece en el chat ✅]
+
