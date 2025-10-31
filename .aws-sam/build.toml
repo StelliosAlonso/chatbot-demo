@@ -9,4 +9,13 @@ manifest_hash = ""
 packagetype = "Zip"
 functions = ["ChatApiFunction"]
 
+[function_build_definitions.c4381247-4a80-4c9a-bd3e-a061734bd315]
+codeuri = "C:\\Users\\owner\\Documents\\GitHubProjects\\Utiliware\\chatbot-demo\\backend\\save-chat-message"
+runtime = "python3.12"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["StoreMessageApiFunction"]
+
 [layer_build_definitions]

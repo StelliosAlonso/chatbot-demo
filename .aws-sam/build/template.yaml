@@ -251,6 +251,35 @@ Resources:
               Ref: ChatApi
     Metadata:
       SamResourceId: ChatApiFunction
+  StoreMessageApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-store-message-api
+      Description: API para guardar mensajes de usuario y agente en DynamoDB
+      CodeUri: StoreMessageApiFunction
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE:
+            Ref: PetsChatbotTable
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PetsChatbotTable
+      Events:
+        ApiPostMessage:
+          Type: Api
+          Properties:
+            Path: /chats/{chatId}/messages
+            Method: post
+            RestApiId:
+              Ref: ChatApi
+    Metadata:
+      SamResourceId: StoreMessageApiFunction
   AmplifyServiceRole:
     Type: AWS::IAM::Role
     Properties:

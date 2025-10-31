@@ -642,6 +642,47 @@ const handleConfirmCreate = async () => {
     scrollToBottom();
   }, [messages]);
 
+
+  // Helper storeMessage:
+  const storeMessage = async ({ chatId, message, sender }) => {
+  if (!chatId) throw new Error("chatId es requerido para guardar el mensaje");
+
+  try {
+    // Obtener token de Cognito
+    const AuthModule = await ensureAuthModule();
+    let token = null;
+    if (AuthModule) {
+      const session = await (AuthModule.currentSession?.() || AuthModule.fetchAuthSession?.());
+      token = session?.getIdToken?.()?.getJwtToken?.() || session?.idToken?.jwtToken || null;
+    }
+
+    // Endpoint dinámico (Mover a env)
+    const url = `https://7094kc2nel.execute-api.us-east-1.amazonaws.com/Prod/chats/${chatId}/messages`;
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      },
+      body: JSON.stringify({ message, sender }),
+    });
+
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => "");
+      throw new Error(`Error guardando mensaje: ${resp.status} ${txt}`);
+    }
+
+    const data = await resp.json();
+    console.log("✅ Mensaje guardado:", data);
+    return data;
+
+  } catch (err) {
+    console.error("❌ Error guardando mensaje:", err);
+  }
+};
+
+
   /**
    * Handles the submission of new messages to the chat
    * Sends message to Bedrock agent or Strands agent and processes response
@@ -761,6 +802,12 @@ const handleConfirmCreate = async () => {
   
       const agentMessage = { text: replyText, sender: agentName.value || 'Agent' };
   
+      // Guardar mensaje del usuario
+      await storeMessage({ chatId: sessionId, message: originalMessage, sender: user.username });
+
+      // Guardar respuesta del agente
+      await storeMessage({ chatId: sessionId, message: replyText, sender: agentName.value || "Agent" });
+
       // Append agent message and persist both user+agent messages
       setMessages(prev => [...prev, agentMessage]);
       storeMessages(sessionId, [userMessage, agentMessage]);
