@@ -23,7 +23,7 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: "amazon.titan-embed-001"
+    Default: "amazon.nova-micro-v1:0"
     Description: Foundation model id to use for the Bedrock Agent (adjust per region)
 
   BedrockAgentName:
