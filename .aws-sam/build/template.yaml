@@ -20,7 +20,7 @@ Parameters:
     Description: Sign out URLs for the Cognito App Client (comma-separated)
   BedrockModelId:
     Type: String
-    Default: amazon.titan-embed-001
+    Default: amazon.nova-micro-v1:0
     Description: Foundation model id to use for the Bedrock Agent (adjust per region)
   BedrockAgentName:
     Type: String
@@ -196,6 +196,61 @@ Resources:
         Fn::Sub: ${EnvironmentName}-alias
       Description: Alias created by SAM template
     DependsOn: BedrockAgent
+  PetsChatbotTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        Fn::Sub: ${AWS::StackName}-chatdata
+      AttributeDefinitions:
+      - AttributeName: PK
+        AttributeType: S
+      - AttributeName: SK
+        AttributeType: S
+      KeySchema:
+      - AttributeName: PK
+        KeyType: HASH
+      - AttributeName: SK
+        KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+  ChatApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name:
+        Fn::Sub: ${AWS::StackName}-ChatApi
+      StageName: Prod
+      Cors:
+        AllowMethods: '''OPTIONS,GET,POST,PUT,DELETE'''
+        AllowHeaders: '''Content-Type,Authorization'''
+        AllowOrigin: '''*'''
+  ChatApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-new-chat-api
+      Description: API para crear chats en DynamoDB
+      CodeUri: ChatApiFunction
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE:
+            Ref: PetsChatbotTable
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PetsChatbotTable
+      Events:
+        ApiPost:
+          Type: Api
+          Properties:
+            Path: /chats
+            Method: post
+            RestApiId:
+              Ref: ChatApi
+    Metadata:
+      SamResourceId: ChatApiFunction
   AmplifyServiceRole:
     Type: AWS::IAM::Role
     Properties:

@@ -188,6 +188,61 @@ Resources:
       Description: "Alias created by SAM template"
     DependsOn: BedrockAgent
 
+  # --------------------------------------- [SINGLE TABLE DESIGN CHATBOT] ---------------------------------------
+  PetsChatbotTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-chatdata"
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+
+  # --------------------------------------- [API CREACION DE NUEVOS CHATS] ---------------------------------------
+  # --------------------------------------- [API] ---------------------------------------
+  ChatApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-ChatApi"
+      StageName: Prod
+      Cors:
+        AllowMethods: "'OPTIONS,GET,POST,PUT,DELETE'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+
+  # --------------------------------------- [API CREACION DE NUEVOS CHATS] ---------------------------------------
+  ChatApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-new-chat-api"
+      Description: "API para crear chats en DynamoDB"
+      CodeUri: backend/chat_api/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE: !Ref PetsChatbotTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PetsChatbotTable
+      Events:
+        ApiPost:
+          Type: Api
+          Properties:
+            Path: /chats
+            Method: post
+            RestApiId: !Ref ChatApi
+
+  # --------------------------------------- [-----------------------------------------] ---------------------------------------
 
 
   AmplifyServiceRole:
