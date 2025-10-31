@@ -323,3 +323,18 @@ AWS responsibilities and liabilities to its customers are controlled by AWS agre
 - Salman Ahmed
 - Ravi Kumar
 - Ankush Goyal
+
+flowchart TD
+
+A[Usuario escribe mensaje] --> B[onSendMessage()]
+B --> C[Guardar mensaje en estado local]
+C --> D[sendMessageToAgent()]
+
+D --> E[Llama a API AWS Lambda / Bedrock]
+E --> F[Servicio procesa mensaje]
+F --> G[Agente genera respuesta]
+
+G --> H[Devolver respuesta a front-end]
+H --> I[Actualizar estado mensajes]
+I --> J[React vuelve a renderizar UI]
+J --> K[Mensaje del agente aparece en el chat ✅]
