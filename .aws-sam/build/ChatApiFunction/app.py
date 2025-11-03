@@ -37,6 +37,10 @@ def lambda_handler(event, context):
         if event.get("httpMethod") == "OPTIONS":
             return {"statusCode": 200, "headers": headers}
 
+        print("Evento recibido:", json.dumps(event))
+        print("Body recibido:", event.get("body"))
+
+
         body = json.loads(event.get("body", "{}"))
         chat_id = str(uuid.uuid4())
         chat_name = body.get("chatName", "Nuevo chat")

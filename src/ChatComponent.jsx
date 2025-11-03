@@ -90,7 +90,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   };
 
 
-    // Estado para controlar el modal de nuevo chat
+  // Estado para controlar el modal de nuevo chat
   const [showNewChatModal, setShowNewChatModal] = useState(false);
 
   // Estado para el nombre del chat
@@ -151,15 +151,15 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     console.log('New session created:', newSessionId);
   }, []);
 
-const API_URL = import.meta.env.VITE_CHAT_API_URL;
+  const API_URL = import.meta.env.VITE_CHAT_API_URL;
 
-const handleConfirmCreate = async () => {
-  if (!chatName.trim()) return alert("Por favor ingresa un nombre para el chat.");
+  const handleConfirmCreate = async () => {
+    if (!chatName.trim()) return alert("Por favor ingresa un nombre para el chat.");
 
-  try {
-    setLoadingNewChat(true);
+    try {
+      setLoadingNewChat(true);
 
-    let email = "desconocido";
+      let email = "desconocido";
 
       // Resolver el módulo Auth
       let AuthModule;
@@ -172,63 +172,63 @@ const handleConfirmCreate = async () => {
         return; // abortar si no hay Auth disponible
       }
 
-        // 🟢 Obtener y mostrar el email del usuario autenticado
-    try {
-      const { getCurrentUser } = AuthModule;
-      if (getCurrentUser) {
-        const user = await getCurrentUser();
-        email = user?.signInDetails?.loginId || user?.username || "desconocido";
-        console.log("📧 Email del usuario autenticado:", email);
-      } else {
-        console.warn("getCurrentUser no está disponible en AuthModule.");
+      // 🟢 Obtener y mostrar el email del usuario autenticado
+      try {
+        const { getCurrentUser } = AuthModule;
+        if (getCurrentUser) {
+          const user = await getCurrentUser();
+          email = user?.signInDetails?.loginId || user?.username || "desconocido";
+          console.log("📧 Email del usuario autenticado:", email);
+        } else {
+          console.warn("getCurrentUser no está disponible en AuthModule.");
+        }
+      } catch (emailErr) {
+        console.error("❌ Error obteniendo email del usuario:", emailErr);
       }
-    } catch (emailErr) {
-      console.error("❌ Error obteniendo email del usuario:", emailErr);
+
+
+      // Obtener token de sesión actual
+      let token;
+      if (typeof AuthModule.currentSession === 'function') {
+        const session = await AuthModule.currentSession();
+        token = session?.getIdToken?.()?.getJwtToken?.() || null;
+      } else if (typeof AuthModule.fetchAuthSession === 'function') {
+        const session = await AuthModule.fetchAuthSession();
+        token = session?.tokens?.idToken || null;
+      }
+
+      if (!token) {
+        console.warn('No se pudo obtener token de sesión. La llamada a la API podría fallar.');
+      }
+
+      // Llamada a la API Gateway
+      const response = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: token || "",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ chatName, email }),
+      });
+
+      if (!response.ok) throw new Error("Error al crear el chat en la API");
+
+      const data = await response.json();
+      console.log("✅ Chat creado exitosamente:", data);
+
+      setShowNewChatModal(false);
+      setChatName("");
+
+      // Crear sesión local para este chat
+      createNewSession();
+
+    } catch (error) {
+      console.error("❌ Error al crear el chat:", error);
+      alert("Hubo un problema creando el chat.");
+    } finally {
+      setLoadingNewChat(false);
     }
-
-
-    // Obtener token de sesión actual
-    let token;
-    if (typeof AuthModule.currentSession === 'function') {
-      const session = await AuthModule.currentSession();
-      token = session?.getIdToken?.()?.getJwtToken?.() || null;
-    } else if (typeof AuthModule.fetchAuthSession === 'function') {
-      const session = await AuthModule.fetchAuthSession();
-      token = session?.tokens?.idToken || null;
-    }
-
-    if (!token) {
-      console.warn('No se pudo obtener token de sesión. La llamada a la API podría fallar.');
-    }
-
-    // Llamada a la API Gateway
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: token || "",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ chatName, email }),
-    });
-
-    if (!response.ok) throw new Error("Error al crear el chat en la API");
-
-    const data = await response.json();
-    console.log("✅ Chat creado exitosamente:", data);
-
-    setShowNewChatModal(false);
-    setChatName("");
-
-    // Crear sesión local para este chat
-    createNewSession();
-
-  } catch (error) {
-    console.error("❌ Error al crear el chat:", error);
-    alert("Hubo un problema creando el chat.");
-  } finally {
-    setLoadingNewChat(false);
-  }
-};
+  };
 
   /**
    * Retrieves messages for a specific chat session from localStorage
@@ -624,9 +624,9 @@ const handleConfirmCreate = async () => {
     // Re-ejecutar si cambia user (login/logout)
   }, [user]);
 
-  
-  
-  
+
+
+
 
   useEffect(() => {
     if ((bedrockClient || lambdaClient || agentCoreClient) && !sessionId) {
@@ -645,42 +645,40 @@ const handleConfirmCreate = async () => {
 
   // Helper storeMessage:
   const storeMessage = async ({ chatId, message, sender }) => {
-  if (!chatId) throw new Error("chatId es requerido para guardar el mensaje");
+    if (!chatId) throw new Error("chatId es requerido para guardar el mensaje");
 
-  try {
-    // Obtener token de Cognito
-    const AuthModule = await ensureAuthModule();
-    let token = null;
-    if (AuthModule) {
-      const session = await (AuthModule.currentSession?.() || AuthModule.fetchAuthSession?.());
-      token = session?.getIdToken?.()?.getJwtToken?.() || session?.idToken?.jwtToken || null;
+    try {
+      // Obtener token de Cognito
+      const AuthModule = await ensureAuthModule();
+      let token = null;
+      if (AuthModule) {
+        const session = await (AuthModule.currentSession?.() || AuthModule.fetchAuthSession?.());
+        token = session?.getIdToken?.()?.getJwtToken?.() || session?.idToken?.jwtToken || null;
+      }
+
+      // Endpoint dinámico (Mover a env)
+      const resp = await fetch(`${API_URL}/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+        body: JSON.stringify({ message, sender }),
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        throw new Error(`Error guardando mensaje: ${resp.status} ${txt}`);
+      }
+
+      const data = await resp.json();
+      console.log("✅ Mensaje guardado:", data);
+      return data;
+
+    } catch (err) {
+      console.error("❌ Error guardando mensaje:", err);
     }
-
-    // Endpoint dinámico (Mover a env)
-    const url = `https://7094kc2nel.execute-api.us-east-1.amazonaws.com/Prod/chats/${chatId}/messages`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: token ? `Bearer ${token}` : "",
-      },
-      body: JSON.stringify({ message, sender }),
-    });
-
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => "");
-      throw new Error(`Error guardando mensaje: ${resp.status} ${txt}`);
-    }
-
-    const data = await resp.json();
-    console.log("✅ Mensaje guardado:", data);
-    return data;
-
-  } catch (err) {
-    console.error("❌ Error guardando mensaje:", err);
-  }
-};
+  };
 
 
   /**
@@ -689,17 +687,18 @@ const handleConfirmCreate = async () => {
    * @param {Event} e - Form submission event
    */
   const handleSubmit = async (e) => {
+
     e.preventDefault();
     if (!newMessage.trim() || !sessionId) return;
-  
+
     // Lee appConfig si lo necesitas para otras cosas (no obligatorio aquí)
     const appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
-  
+
     // Helper interno: envia mensaje al API Gateway del agente (hardcode endpoint)
     const sendToAgentEndpoint = async ({ sessionId, message }) => {
       const endpoint = 'https://z2a5hwfq92.execute-api.us-east-1.amazonaws.com/production/chat';
       const headers = { 'Content-Type': 'application/json' };
-  
+
       // Intento de extraer un idToken de Cognito/Amplify para Authorization Bearer (opcional)
       try {
         const AuthModule = await ensureAuthModule().catch(() => null);
@@ -730,7 +729,7 @@ const handleConfirmCreate = async () => {
           } catch (err) {
             console.debug('No se pudo extraer idToken del AuthModule:', err);
           }
-  
+
           if (token) {
             headers['Authorization'] = `Bearer ${token}`;
             console.debug('sendToAgentEndpoint: Authorization header added (masked).');
@@ -739,26 +738,26 @@ const handleConfirmCreate = async () => {
       } catch (err) {
         console.debug('sendToAgentEndpoint: ensureAuthModule falló (no Authorization).', err);
       }
-  
+
       // Construir body que espera el endpoint
       const body = {
         sessionId,
         message,
         user: user?.username || 'anonymous'
       };
-  
+
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
       });
-  
+
       if (!resp.ok) {
         // intentar leer cuerpo para diagnóstico
         const txt = await resp.text().catch(() => '');
         throw new Error(`Agent API error ${resp.status}: ${txt}`);
       }
-  
+
       // parseo seguro de JSON
       let data = null;
       try {
@@ -768,12 +767,12 @@ const handleConfirmCreate = async () => {
         const txt = await resp.text().catch(() => '');
         return txt || '';
       }
-  
+
       // Soportar varias formas de respuesta comunes
       const reply = data?.reply || data?.response || data?.text || data?.message || (typeof data === 'string' ? data : JSON.stringify(data));
       return reply;
     };
-  
+
     // Helper para maskear secretos en logs si lo necesitas
     const mask = (s = '') => {
       if (!s) return '(empty)';
@@ -781,29 +780,54 @@ const handleConfirmCreate = async () => {
       if (str.length <= 8) return `${str.slice(0, 2)}...${str.slice(-2)}`;
       return `${str.slice(0, 4)}...${str.slice(-4)}`;
     };
-  
+
     // Clear input field (UX)
     const originalMessage = newMessage;
     setNewMessage('');
     const userMessage = { text: originalMessage, sender: user.username };
     setMessages(prev => [...prev, userMessage]);
     setIsAgentResponding(true);
-  
+
     try {
       // Invocar endpoint del agente
       console.groupCollapsed('handleSubmit -> invoking external agent endpoint');
       console.log('sessionId:', sessionId);
       console.log('user:', user?.username);
       console.log('message preview:', originalMessage.slice(0, 200));
-  
+
       const replyText = await sendToAgentEndpoint({ sessionId, message: originalMessage });
-  
+
       console.log('agent reply (preview):', (typeof replyText === 'string' ? replyText.slice(0, 500) : JSON.stringify(replyText).slice(0, 500)));
-  
+
       const agentMessage = { text: replyText, sender: agentName.value || 'Agent' };
-  
+
+      // 🟢 Obtener y mostrar el email del usuario autenticado
+      let email;
+      let AuthModule;
+
+      try {
+        AuthModule = await ensureAuthModule();
+        console.log('AuthModule resolved:', AuthModule);
+        console.log('AuthModule keys:', Object.keys(AuthModule || {}));
+      } catch (authErr) {
+        console.error('No se pudo resolver el módulo Auth:', authErr);
+        return; // abortar si no hay Auth disponible
+      }
+      
+      try {
+        const { getCurrentUser } = AuthModule;
+        if (getCurrentUser) {
+          const user = await getCurrentUser();
+          email = user?.signInDetails?.loginId || user?.username || "desconocido";
+        } else {
+          console.warn("getCurrentUser no está disponible en AuthModule.");
+        }
+      } catch (emailErr) {
+        console.error("❌ Error obteniendo email del usuario:", emailErr);
+      }
+
       // Guardar mensaje del usuario
-      await storeMessage({ chatId: sessionId, message: originalMessage, sender: user.username });
+      await storeMessage({ chatId: sessionId, message: originalMessage, sender: email });
 
       // Guardar respuesta del agente
       await storeMessage({ chatId: sessionId, message: replyText, sender: agentName.value || "Agent" });
@@ -811,7 +835,7 @@ const handleConfirmCreate = async () => {
       // Append agent message and persist both user+agent messages
       setMessages(prev => [...prev, agentMessage]);
       storeMessages(sessionId, [userMessage, agentMessage]);
-  
+
       console.groupEnd();
     } catch (err) {
       console.error('Error invoking external agent endpoint:', {
@@ -819,7 +843,7 @@ const handleConfirmCreate = async () => {
         message: err?.message,
         stack: err?.stack
       });
-  
+
       const errReason = "**" + String(err) + "**";
       const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
       setMessages(prev => [...prev, errorMessage]);
@@ -830,9 +854,9 @@ const handleConfirmCreate = async () => {
       setTasksCompleted({ count: 0, latestRationale: '' });
     }
   };
-  
 
-  
+
+
 
   const handleLogout = async () => {
     try {
