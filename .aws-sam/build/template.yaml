@@ -280,6 +280,64 @@ Resources:
               Ref: ChatApi
     Metadata:
       SamResourceId: StoreMessageApiFunction
+  GetUserChatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-get-user-chats
+      Description: Devuelve todos los chats asociados a un usuario (por email)
+      CodeUri: GetUserChatsFunction
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE:
+            Ref: PetsChatbotTable
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: PetsChatbotTable
+      Events:
+        ApiGetUserChats:
+          Type: Api
+          Properties:
+            Path: /chats
+            Method: get
+            RestApiId:
+              Ref: ChatApi
+    Metadata:
+      SamResourceId: GetUserChatsFunction
+  GetChatMessagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-get-chat-messages
+      Description: "Devuelve todos los mensajes asociados a un chat espec\xEDfico"
+      CodeUri: GetChatMessagesFunction
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE:
+            Ref: PetsChatbotTable
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: PetsChatbotTable
+      Events:
+        ApiGetChatMessages:
+          Type: Api
+          Properties:
+            Path: /chats/{chatId}/messages
+            Method: get
+            RestApiId:
+              Ref: ChatApi
+    Metadata:
+      SamResourceId: GetChatMessagesFunction
   AmplifyServiceRole:
     Type: AWS::IAM::Role
     Properties:

@@ -45,10 +45,11 @@ def lambda_handler(event, context):
         chat_id = str(uuid.uuid4())
         chat_name = body.get("chatName", "Nuevo chat")
         user_id = body.get("email", "anonymous")  # <-- Usar email del body
-
+        
         item = {
             "PK": f"USER#{user_id}",
             "SK": f"CHAT#{chat_id}",
+            "type": "CHAT",
             "chatName": chat_name,
             "createdAt": datetime.utcnow().isoformat()
         }

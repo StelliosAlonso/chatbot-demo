@@ -18,4 +18,22 @@ manifest_hash = ""
 packagetype = "Zip"
 functions = ["StoreMessageApiFunction"]
 
+[function_build_definitions.74ebf415-aae3-4d7b-a64b-dd96be87cf8b]
+codeuri = "C:\\Users\\owner\\Documents\\GitHubProjects\\Utiliware\\chatbot-demo\\backend\\get_chats"
+runtime = "python3.12"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["GetUserChatsFunction"]
+
+[function_build_definitions.eef40fc7-8f11-4371-abd7-91eb8b9ed3a9]
+codeuri = "C:\\Users\\owner\\Documents\\GitHubProjects\\Utiliware\\chatbot-demo\\backend\\get_messages"
+runtime = "python3.12"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["GetChatMessagesFunction"]
+
 [layer_build_definitions]

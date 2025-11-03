@@ -48,8 +48,8 @@ def lambda_handler(event, context):
 
         # Guardar mensaje en DynamoDB
         table.put_item(Item={
-            "PK": f"USER#{user_id}",
-            "SK": f"CHAT#{chat_id}#MSG#{timestamp}#{msg_id}",
+            "PK": f"CHAT#{chat_id}",
+            "SK": f"MSG#{timestamp}#{msg_id}",
             "type": "MESSAGE",
             "message": msg_text,
             "sender": user_id,

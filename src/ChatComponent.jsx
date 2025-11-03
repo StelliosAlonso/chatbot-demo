@@ -138,9 +138,10 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
    * Clears existing messages and initializes storage for the new session
    * Uses timestamp as session identifier
    */
-  const createNewSession = useCallback(() => {
+  const createNewSession = useCallback((providedSessionId) => {
     // Generate new session ID using current timestamp
-    const newSessionId = `agentcore-session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}-${Math.random().toString(36).substring(2, 15)}`;
+    const newSessionId = providedSessionId 
+    || `agentcore-session-${Date.now()}-${Math.random().toString(36).substring(2, 15)}-${Math.random().toString(36).substring(2, 15)}`;
     // Update session state
     setSessionId(newSessionId);
     // Clear existing messages
@@ -219,8 +220,11 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
       setShowNewChatModal(false);
       setChatName("");
 
+      // Retrieve data from lambda
+      const newChatId = data.chatId; 
+
       // Crear sesión local para este chat
-      createNewSession();
+      createNewSession(newChatId);
 
     } catch (error) {
       console.error("❌ Error al crear el chat:", error);
@@ -888,7 +892,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
           <TopNavigation
             identity={{
               href: "#",
-              title: `Chat with ${agentName.value}`,
+              title: `Chat with Nova Micro`,
             }}
             utilities={
               [
@@ -936,9 +940,9 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                 //This is the user session menu options
                 {
                   type: "menu-dropdown",
-                  text: user.username,
+                  text: user.signInDetails?.loginId || user.username,  // Change this
                   iconName: "user-profile",
-                  title: user.username,
+                  title: user.signInDetails?.loginId || user.username, // Change this
                   ariaLabel: "User",
                   disableUtilityCollapse: true,
                   onItemClick: ({ detail }) => {
@@ -1057,7 +1061,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
           <Modal
             onDismiss={() => setShowNewChatModal(false)}
             visible={showNewChatModal}
-            header="Crear nuevo chat"
+            header="Create a new chat"
             closeAriaLabel="Cerrar"
             footer={
               <Box float="right">
@@ -1077,11 +1081,11 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
             }
           >
             <FormField
-              label="Nombre del nuevo chat"
-              description="Este nombre se usará para identificar tu conversación en la base de datos."
+              label="New chat's name"
+              description="This name will be used to identify your chat in the database."
             >
               <Input
-                placeholder="Escribe un nombre..."
+                placeholder="Write a new name..."
                 value={chatName}
                 onChange={(e) => setChatName(e.detail.value)}
               />

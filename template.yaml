@@ -267,6 +267,56 @@ Resources:
             Method: post
             RestApiId: !Ref ChatApi
 
+  # --------------------------------------- [LAMBDA OBTENER CHATS DE USUARIO] ---------------------------------------
+  GetUserChatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-get-user-chats"
+      Description: "Devuelve todos los chats asociados a un usuario (por email)"
+      CodeUri: backend/get_chats/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE: !Ref PetsChatbotTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref PetsChatbotTable
+      Events:
+        ApiGetUserChats:
+          Type: Api
+          Properties:
+            Path: /chats
+            Method: get
+            RestApiId: !Ref ChatApi
+
+  # --------------------------------------- [LAMBDA OBTENER MENSAJES DE UN CHAT] ---------------------------------------
+  GetChatMessagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-get-chat-messages"
+      Description: "Devuelve todos los mensajes asociados a un chat específico"
+      CodeUri: backend/get_messages/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE: !Ref PetsChatbotTable
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref PetsChatbotTable
+      Events:
+        ApiGetChatMessages:
+          Type: Api
+          Properties:
+            Path: /chats/{chatId}/messages
+            Method: get
+            RestApiId: !Ref ChatApi
+
 
   # --------------------------------------- [-----------------------------------------] ---------------------------------------
 
