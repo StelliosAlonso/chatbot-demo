@@ -1,115 +1,478 @@
-.chat-component {
-  max-width: 900px; 
-  width: 99%; 
-  margin: 0 auto; 
-  margin-top: 20px;
-  overflow: hidden; 
-}
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
 
-.header-buttons {
-  display: flex;
-  gap: 10px;
-}
+  :root{
+    --vertical-gap: 40px;
+    --footer-height: 76px; /* altura aproximada del formulario/footer */
+  }
+  
 
-.chat-container {
-  display: flex;
-  flex-direction: column;
-  margin: 2px auto;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  overflow: hidden;
-  height: 95vh;
-}
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  
 
-.chat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background-color: #f0f0f0;
-  padding: 5px 10px;
-  border-bottom: 1px solid #ccc;
-  flex-shrink: 0; /* Prevent header from shrinking */  
-}
+  .container-stretch {
+    height: 100% !important;       /* fuerza el alto desde aquí */
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+  }
 
-.messages-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-}
+  /* Container principal */
+  .chat-component {
+    max-width: 1200px;
+    width: 100%;
+    margin: 20px auto;
+    height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  
+  /* Card principal */
+  .chat-container {
+    margin: 0;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+    box-sizing: border-box;
+    height: 100%;
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    overflow: hidden;
+    grid-auto-rows: 1fr;
+  }
+  
+  /* Dos columnas */
+  .chat-container.two-column {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Columnas como flex containers (crucial: min-height:0) */
+  .chat-sidebar,
+  .chat-main {
+    min-height: 0;           /* CRUCIAL: permite que los elementos flex/grid hagan overflow interno */
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+  }
+  
+  /* ---------------- Sidebar ---------------- */
+  .chat-sidebar {
+    border-right: 1px solid #e6e6e6;
+    padding: 8px;
+    background: #fafafa;
+    display: flex;
+    flex-direction: column;
+    height: 100%; /* Ocupa toda la altura */
+    overflow: hidden; /* Evita desbordamiento */
+    box-sizing: border-box;
+  }
+  
+  /* Sidebar toolbar: vertical layout (botón nuevo encima, luego buscador) */
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 6px 4px;
+    border-bottom: 1px solid #eee;
+    background: transparent;
+    flex: 0 0 auto; /* No se redimensiona */
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #fafafa; /* Mismo fondo que sidebar */
+  }
+  
+  /* Estilo del botón Nuevo (vertical) */
+  .new-chat-btn {
+    background: #0b63d6;
+    color: white;
+    border: none;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+  }
 
-.message-form {
-  padding: 10px;
-  border-top: 1px solid #ccc;
-  flex-shrink: 0;
-  width: 100%;
-}
+  
 
-.scrollable {
-  -webkit-overflow-scrolling: touch; /* For smooth scrolling on iOS */
-  scrollbar-width: thin; /* For Firefox */
-  scrollbar-color: #888 #f1f1f1; /* For Firefox */
-}
+  .new-chat-btn:hover { 
+    opacity: 0.95; 
+  }
+  
+  /* Wrapper para search + refresh en horizontal (debajo del botón) */
+  .sidebar-nav > div button {
+    background: transparent;
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  
+  /* Search input */
+  .chat-search {
+    flex: 1;
+    width: 100%;
+    padding: 8px 6px;
+    background: transparent;
+    border: none;                       /* quitar el borde completo */
+    border-bottom: 1px solid rgba(0,0,0,0.12); /* unica linea */
+    border-radius: 0;
+    outline: none;
+    font-size: 0.95rem;
+    color: inherit;
+    transition: border-color .12s ease, box-shadow .12s ease;
+  }
+  
+  /* placeholder sutil */
+  .chat-search::placeholder {
+    color: rgba(0,0,0,0.35);
+  }
 
-/* For Webkit browsers like Chrome/Safari */
-.scrollable::-webkit-scrollbar {
-  width: 5px;
-}
 
-.scrollable::-webkit-scrollbar-track {
-  background: #f1f1f1;
-}
+  /* foco: acentuar la linea inferior */
+  .chat-search:focus {
+    border-bottom-color: rgba(0, 0, 0, 0.95);
+    box-shadow: 0 2px 0 rgba(175, 175, 175, 0.08);
+  }
+  
+  /* Lista con scroll */
+  .sidebar-list {
+    margin-top: 8px;
+    overflow-y: auto; /* Solo scroll vertical */
+    flex: 1 1 auto;
+    padding-right: 6px;
+    min-height: 0;
+  }
+  
+  /* Item */
+  .sidebar-item {
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 6px;
+    background: transparent;
+    transition: background 0.12s ease;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: relative;
+    overflow: visible; 
+  }
+  .sidebar-item:hover { background: #f0f0f0; }
+  .sidebar-item.selected { background: #eef6ff; border-left: 3px solid #2b9af3; padding-left: 5px; }
+  
+  /* Contenido principal del item (izq) */
+  .sidebar-item-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;  /* alinear a la izquierda */
+    text-align: left;
+    min-width: 0;
+    margin-right: 8px;
+    flex: 1 1 auto;           /* ocupar espacio para empujar el botón ⋯ a la derecha */
+  }
+  
+  .chat-name { 
+    font-weight: 600; 
+    font-size: 0.95rem; 
+    white-space: nowrap; 
+    overflow: hidden; 
+    text-overflow: ellipsis; 
+  }
+  
+  .chat-meta { 
+    font-size: 0.75rem; 
+    color: #666; 
+    margin-top: 6px; 
+  }
+  
+  /* Three-dot button (hidden por defecto, visible al hover) */
+  .chat-more-btn {
+    display: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .sidebar-item:hover .chat-more-btn { display: inline-flex; }
+  
+  /* ---------------- Main (columna derecha) ---------------- */
+  .chat-main {
+    display: grid;
+    grid-template-rows: auto 1fr auto; /* topnav / messages / footer */
+    min-height: 0;      /* CRUCIAL para que 1fr respete overflow interno */
+    height: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Mantener TopNavigation visible */
+  .topnav-wrapper {
+    background-color: #1b3570 !important;      /* gris oscuro */
+    border-bottom: 1px solid #6e6d6d !important;
+  }
 
-.scrollable::-webkit-scrollbar-thumb {
-  background: #888;
-}
+/*  .topnav-wrapper [class*="awsui"] */
+  /* Forzar el fondo en elementos hijos que la librería pueda crear */
+  .topnav-wrapper > * ,
+  .topnav-wrapper [class*="topnav"],
+  .topnav-wrapper [class*="TopNavigation"],
+  .topnav-wrapper [class*="top-navigation"]{
+    background-color: transparent !important;   /* hacemos transparente en hijos para que se vea el color del wrapper */
+    color: #fff !important;
+  }
 
-.scrollable::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
+  /* Neutralizar el "link" del título dentro del TopNavigation */
+  .topnav-wrapper a,
+  .topnav-wrapper a:link,
+  .topnav-wrapper a:visited,
+  .topnav-wrapper a:hover,
+  .topnav-wrapper a:active,
+  .topnav-wrapper a:focus {
+    pointer-events: none !important;    /* evita clics / hover events */
+    color: rgb(0, 0, 0);          
+    text-decoration: none !important;   /* quita subrayado */
+    cursor: default !important;         /* cursor normal */
+    background: transparent !important;
+    box-shadow: none !important;
+  }
 
-.chat-container h1 {
-  font-size: 2em;
-  line-height: 0.5;
-} 
+  .topnav-wrapper,
+  .topnav-wrapper * {
+    color: #000000 !important;
+  }
 
-.chat-container h2 {
-  font-size: 1.5em;
-  line-height: 0.5;
-} 
+  /* Iconos / SVGs / textos dentro del topnav */
+  .topnav-wrapper svg,
+  .topnav-wrapper path,
+  .topnav-wrapper *[class*="icon"],
+  .topnav-wrapper button,
+  .topnav-wrapper .awsui-button {
+    color: #000000 !important;
+    stroke: #000000 !important;
+  }
 
-/* Styles for mobile devices with vertical screen orientation */
-@media (max-width: 920px), (orientation: portrait) {
+  
+  /* messages-pane ocupa el espacio restante */
+  .messages-pane {
+    grid-row: 2;
+    min-height: 0;     /* CRUCIAL para que el scroll se mantenga interno */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;  /* el scroll real será dentro de .messages-container */
+    position: relative;
+  }
+  
+  /* Contenedor de mensajes siempre mantiene tamaño (min-height) y permite scroll interno */
+  .messages-container {
+    flex: 1 1 auto;
+    min-height: 0;                /* importante */
+    overflow-y: auto;             /* <<-- Aquí debe salir la barra de scroll */
+    padding: 16px;
+    padding-bottom: calc(var(--footer-height) + 16px); /* evita que el último mensaje quede oculto por el footer */
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-sizing: border-box;
+  }
+  
+  /* fila de mensaje */
+  .message-row {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  
+  /* contenido dentro del bubble */
+  .message-content {
+    line-height: 1.25 !important;    /* reduce el interlineado (ajusta a tu gusto: 1.0 - 1.25) */
+    font-size: 14px;                 /* opcional: tamaño de fuente */
+    color: inherit;
+  }
+  
+
+  
+  /* placeholder vacio */
+  .messages-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 160px;
+    color: #666;
+    background: transparent;
+    border-radius: 6px;
+  }
+  
+
+  
+  /* Agent-processing indicator */
+  .agent-indicator {
+    padding: 8px 12px;
+    border-top: 1px solid #eee;
+    background: #fff;
+    flex: 0 0 auto;    /* ocupa su espacio sin overlay */
+    position: relative; /* NO sticky bottom */
+    z-index: 15;
+  }
+  
+  /* Footer / formulario */
+  .message-form {
+    grid-row: 3;
+    padding: 10px;
+    border-top: 1px solid #ccc;
+    flex: 0 0 auto;
+    width: 100%;
+    box-sizing: border-box;
+    background: #fff;
+    position: relative;  /* NO sticky bottom */
+    z-index: 20;
+  }
+  
+  
+  /* Scrollbars estéticos */
+  .scrollable {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #888 #f1f1f1;
+  }
+  .scrollable::-webkit-scrollbar { width: 6px; }
+  .scrollable::-webkit-scrollbar-track { background: #f1f1f1; }
+  .scrollable::-webkit-scrollbar-thumb { background: #888; border-radius: 6px; }
+
+
+
+
+  /* Mejorar el scroll en áreas específicas */
+  .sidebar-list,
+  .messages-container {
+    scrollbar-width: thin;
+    scrollbar-color: #888 #f1f1f1;
+  }
+
+  .sidebar-list::-webkit-scrollbar,
+  .messages-container::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .sidebar-list::-webkit-scrollbar-track,
+  .messages-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 6px;
+  }
+
+  .sidebar-list::-webkit-scrollbar-thumb,
+  .messages-container::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 6px;
+  }
+
+  .sidebar-list::-webkit-scrollbar-thumb:hover,
+  .messages-container::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+
+
+
+  /* Responsive */
+  @media (max-width: 920px) {
     .chat-container {
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        overflow: hidden;
-        height: 80vh;
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr;
     }
-
-    .chat-container h1 {
-      font-size: 1.5em;
-      line-height: 1.1;
-    } 
     
-    .chat-container h2 {
-      font-size: 1.2em;
-      line-height: 1;
-    } 
-}
-
-/* Target Safari on iPhone */
-@media only screen
-  and (max-device-width: 1500px)
-  and (orientation: portrait) {
-    /* CSS rules specific to Safari on iPhone in portrait mode */
-    .chat-component {
-      margin-top: 50px;
+    .chat-sidebar {
+      order: 0;
+      width: 100%;
+      border-right: none;
+      border-bottom: 1px solid #eee;
+      max-height: 300px; /* Altura máxima en móvil */
     }
+    
+    .chat-main {
+      order: 1;
+      height: auto;
+      min-height: 400px;
+    }
+    
+    .sidebar-nav {
+      position: relative; /* En móvil no sticky */
+    }
+  }
+  
+  /* Botones pequeños */
+  .refresh-messages-btn {
+    background: transparent;
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
 
-}
+
+
+  /* botón de tres puntos */
+  .chat-more-btn {
+    background: transparent;
+    border: none;
+    padding: 6px;
+    position: relative;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    border-radius: 6px;
+  }
+  .chat-more-btn:hover { 
+    background: rgba(0,0,0,0.04); 
+  }
+
+  /* menú contextual (floating) */
+  .chat-options-menu {
+    position: absolute;
+    top: 150%;                         /* centrar verticalmente respecto al item */
+    transform: translateY(-50%);      /* alinear exactamente centro */
+    right: 10px;                      /* distancia desde el borde derecho del item (ajusta si quieres) */
+    z-index: 600;
+    background: #fff;
+    border: 1px solid #ddd;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    border-radius: 6px;
+    min-width: 140px;                 /* más compacto si quieres */
+    padding: 6px 0;
+    white-space: nowrap;
+  }
+
+  /* items del menú */
+  .chat-options-menu .menu-item {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.95rem;
+  }
+  .chat-options-menu .menu-item:hover {
+    background: #f5f7fb;
+  }
+
+  /* si quieres un pequeño separador */
+  .chat-options-menu .menu-item + .menu-item {
+    border-top: 1px solid #f1f1f1;
+  }

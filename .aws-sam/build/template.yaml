@@ -338,6 +338,35 @@ Resources:
               Ref: ChatApi
     Metadata:
       SamResourceId: GetChatMessagesFunction
+  UpdateChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: ${AWS::StackName}-update-chat
+      Description: Actualiza el nombre de un chat en DynamoDB (PUT /chats/{chatId})
+      CodeUri: UpdateChatFunction
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE:
+            Ref: PetsChatbotTable
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: PetsChatbotTable
+      Events:
+        ApiPutChat:
+          Type: Api
+          Properties:
+            Path: /chats/{chatId}
+            Method: put
+            RestApiId:
+              Ref: ChatApi
+    Metadata:
+      SamResourceId: UpdateChatFunction
   AmplifyServiceRole:
     Type: AWS::IAM::Role
     Properties:
