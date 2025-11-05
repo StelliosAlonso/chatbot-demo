@@ -1437,7 +1437,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                 <div className="messages-container scrollable" role="log" aria-live="polite">
                   {messages.length === 0 && (
                     <div className="messages-empty">
-                      <div>No hay mensajes todavía. Empieza la conversación escribiendo abajo.</div>
+                      <div>There are no messages yet. Start the conversation by typing below.</div>
                     </div>
                   )}
   
@@ -1548,14 +1548,14 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                   <Box float="right">
                     <SpaceBetween direction="horizontal" size="xs">
                       <Button variant="link" onClick={() => setShowNewChatModal(false)}>
-                        Cancelar
+                        Cancel
                       </Button>
                       <Button
                         variant="primary"
                         loading={loadingNewChat}
                         onClick={handleConfirmCreate}
                       >
-                        Crear chat
+                        Create chat
                       </Button>
                     </SpaceBetween>
                   </Box>
@@ -1599,8 +1599,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                 footer={
                   <Box float="right">
                     <SpaceBetween direction="horizontal" size="xs">
-                      <Button variant="link" onClick={() => setEditModalOpen(false)}>Cancelar</Button>
-                      <Button variant="primary" onClick={confirmEditChat}>Guardar</Button>
+                      <Button variant="link" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+                      <Button variant="primary" onClick={confirmEditChat}>Save</Button>
                     </SpaceBetween>
                   </Box>
                 }

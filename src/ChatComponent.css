@@ -209,7 +209,9 @@
     font-size: 18px;
     line-height: 1;
   }
-  .sidebar-item:hover .chat-more-btn { display: inline-flex; }
+  .sidebar-item:hover .chat-more-btn { 
+    display: inline-flex; 
+  }
   
   /* ---------------- Main (columna derecha) ---------------- */
   .chat-main {
@@ -222,11 +224,11 @@
   
   /* Mantener TopNavigation visible */
   .topnav-wrapper {
-    background-color: #1b3570 !important;      /* gris oscuro */
-    border-bottom: 1px solid #6e6d6d !important;
+    background-color: #ffffff !important;      /* gris oscuro */
+    border-bottom: 0.5px solid #cacaca !important;
   }
 
-/*  .topnav-wrapper [class*="awsui"] */
+/*   */
   /* Forzar el fondo en elementos hijos que la librería pueda crear */
   .topnav-wrapper > * ,
   .topnav-wrapper [class*="topnav"],
@@ -234,6 +236,7 @@
   .topnav-wrapper [class*="top-navigation"]{
     background-color: transparent !important;   /* hacemos transparente en hijos para que se vea el color del wrapper */
     color: #fff !important;
+    border-bottom: 1px solid #ffffff !important;
   }
 
   /* Neutralizar el "link" del título dentro del TopNavigation */
@@ -251,6 +254,7 @@
     box-shadow: none !important;
   }
 
+  /* Texto */
   .topnav-wrapper,
   .topnav-wrapper * {
     color: #000000 !important;
@@ -264,6 +268,19 @@
   .topnav-wrapper .awsui-button {
     color: #000000 !important;
     stroke: #000000 !important;
+  }
+
+  .topnav-wrapper:hover svg,
+  .topnav-wrapper:hover path,
+  .topnav-wrapper:hover *[class*="icon"],
+  .topnav-wrapper:hover button,
+  .topnav-wrapper:hover {
+    color: #505050 !important;
+    stroke: #575757 !important;
+  }
+
+  .topnav-wrapper [class*="awsui"] {
+    background-color: white;
   }
 
   
