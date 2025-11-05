@@ -1214,37 +1214,78 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   };
   
 
-  // Eliminar chat (local + backend)
-  const handleDeleteChat = async (chat) => {
+
+  // modal + control de borrado
+  const [showDeleteChatModal, setShowDeleteChatModal] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);     // objeto chat seleccionado para borrar
+  const [deletingChatId, setDeletingChatId] = useState(null); // chatId que actualmente se está borrando (para loading)
+
+  // cuando el usuario pulsa "Delete" en el menú: abre el modal de confirmación
+  const handleDeleteChat = (chat) => {
+    // cerrar cualquier menú abierto
     setMenuOpenFor(null);
-    const confirmed = window.confirm('¿Eliminar este chat? Esta acción eliminará el chat localmente.');
-    if (!confirmed) return;
 
-    // Eliminar local
-    setChats(prev => prev.filter(x => x.chatId !== chat.chatId));
-    localStorage.removeItem(`messages_${chat.chatId}`);
+    // abrir modal y almacenar referencia al chat a borrar
+    setChatToDelete(chat);
+    setShowDeleteChatModal(true);
+  };
 
-    // Si el chat eliminado estaba seleccionado, limpiar
-    if (selectedChat?.chatId === chat.chatId) {
-      setSelectedChat(null);
-      setSessionId(null);
-      setMessages([]);
-    }
-
-    // Intento de DELETE backend si existe
+  const confirmDeleteChat = async () => {
+    if (!chatToDelete) return;
+  
+    const chatId = chatToDelete.chatId;
+    setDeletingChatId(chatId);
+  
+    // marcar optimista (opcional)
+    setChats(prev => prev.map(c => c.chatId === chatId ? ({ ...c, deleting: true }) : c));
+  
     try {
       const token = await getAuthToken().catch(() => null);
-      await fetch(`${API_URL}/${chat.chatId}`, {
+  
+      const resp = await fetch(`${API_URL}/${chatId}`, {
         method: 'DELETE',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         }
-      }).catch(() => {});
+      });
+  
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(`Server returned ${resp.status} ${body}`);
+      }
+  
+      // BORRADO OK: actualizar UI local
+      setChats(prev => prev.filter(x => x.chatId !== chatId));
+      localStorage.removeItem(`messages_${chatId}`);
+  
+      if (selectedChat?.chatId === chatId) {
+        setSelectedChat(null);
+        setSessionId(null);
+        setMessages([]);
+      }
+  
+      // cerrar modal y limpiar estados
+      setShowDeleteChatModal(false);
+      setChatToDelete(null);
+      setDeletingChatId(null);
+  
     } catch (err) {
-      console.debug('DELETE chat fallback error:', err);
+      console.error('DELETE chat error:', err);
+      // revertir marca de deleting
+      setChats(prev => prev.map(c => c.chatId === chatId ? ({ ...c, deleting: false }) : c));
+      setDeletingChatId(null);
+      alert('No se pudo eliminar el chat en el servidor. Revisa la consola para más detalle.');
     }
   };
+
+  const cancelDeleteChat = () => {
+    setShowDeleteChatModal(false);
+    setChatToDelete(null);
+  };
+  
+
+
 
   // Cerrar menú cuando se cambia de chat
   useEffect(() => {
@@ -1258,6 +1299,22 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     return () => document.removeEventListener('click', onDocClick);
   }, [menuOpenFor]);
   
+
+  // dentro de ChatComponent (arriba del return)
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const settingsRef = useRef(null);
+  const userMenuRef = useRef(null);
+
+  useEffect(() => {
+    function handleDocClick(e) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false);
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleDocClick);
+    return () => document.removeEventListener('mousedown', handleDocClick);
+  }, []);
+
 
   return (() => {
     // calcular índice de la última respuesta enviada por el agente (sender distinto a user.username)
@@ -1365,72 +1422,101 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   
             {/* ---------------------- MAIN - Chat UI existente ---------------------- */}
             <main className="chat-main">
-              {/* Top navigation (Cloudscape) */}
+              {/* Top navigation - custom (usa solo divs) */}
               <div className="topnav-wrapper">
-                <TopNavigation
-                  identity={{
-                    title: `Chat with Nova Micro`,
-                  }}
-                  utilities={
-                    [
-                      {
-                        type: "menu-dropdown",
-                        iconName: "settings",
-                        ariaLabel: "Settings",
-                        title: "Settings",
-                        disableUtilityCollapse: true,
-                        onItemClick: ({ detail }) => {
-                          switch (detail.id) {
-                            case "edit-settings":
-                              onConfigEditorClick();
-                              break;
-                            case "clear-settings":
-                              handleClearData();
-                              break;
-                          }
-                        },
-                        items: [
-                          {
-                            id: "clear-settings",
-                            type: "button",
-                            iconName: "remove",
-                            text: "Clear settings and local storage",
-                          },
-                          {
-                            id: "edit-settings",
-                            text: "Edit Settings",
-                            iconName: "edit",
-                            type: "icon-button",
-                          }
-                        ]
-                      },
-                      {
-                        type: "menu-dropdown",
-                        text: user.signInDetails?.loginId || user.username,
-                        iconName: "user-profile",
-                        title: user.signInDetails?.loginId || user.username,
-                        ariaLabel: "User",
-                        disableUtilityCollapse: true,
-                        onItemClick: ({ detail }) => {
-                          switch (detail.id) {
-                            case "logout":
-                              handleLogout();
-                              break;
-                          }
-                        },
-                        items: [
-                          {
-                            id: "logout",
-                            text: "Logout",
-                            iconName: "exit",
-                            type: "icon-button",
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                />
+                <div className="custom-topnav" role="navigation" aria-label="Top navigation">
+                  <div className="identity" aria-hidden={false}>
+                    <div className="identity-title">Chat with Nova Micro</div>
+                  </div>
+
+                  <div className="utilities" aria-hidden={false}>
+                    {/* Settings dropdown */}
+                    <div className="utility" ref={settingsRef}>
+                      <button
+                        type="button"
+                        className="utility-btn"
+                        aria-haspopup="true"
+                        aria-expanded={settingsOpen}
+                        aria-label="Settings"
+                        onClick={() => setSettingsOpen((s) => !s)}
+                      >
+                        <svg className="utility-icon" xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 1-1.51-.42 1.65 1.65 0 0 0-2.43 0 1.65 1.65 0 0 1-1.52.42 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 0 1 4.93 19.07l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 1 .42-1.51 1.65 1.65 0 0 0 0-2.43 1.65 1.65 0 0 1-.42-1.51 1.65 1.65 0 0 0 .33-1.82l.06-.06A2 2 0 0 1 7.07 4.93l.06.06a1.65 1.65 0 0 0 1.82.33c.5-.22 1.05-.22 1.51.42.46.64 1.36.64 1.82 0 .46-.64 1.01-.64 1.51-.42a1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 0 1 19.07 4.93l-.06.06a1.65 1.65 0 0 0-.33 1.82c.22.5.22 1.05-.42 1.51-.64.46-.64 1.36 0 1.82.64.46.64 1.36 0 1.82-.64.46-.64 1.36 0 1.82z" />
+                          <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                      </button>
+
+
+                      {settingsOpen && (
+                        <div className="dropdown-menu" role="menu" aria-label="Settings menu">
+                          <button
+                            type="button"
+                            className="menu-item"
+                            role="menuitem"
+                            onClick={() => { setSettingsOpen(false); handleClearData(); }}
+                          >
+                            {/* icon - refresh */}
+                            <span>🗑 Clear settings and local storage</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="menu-item"
+                            role="menuitem"
+                            onClick={() => { setSettingsOpen(false); onConfigEditorClick(); }}
+                          >
+                            {/* icon - pencil (edit) */}
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                              <path d="M12 20h9"></path>
+                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            <span>Edit Settings</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* User dropdown */}
+                    <div className="utility" ref={userMenuRef}>
+                      <button
+                        type="button"
+                        className="utility-btn"
+                        aria-haspopup="true"
+                        aria-expanded={userMenuOpen}
+                        aria-label="User menu"
+                        onClick={() => setUserMenuOpen((s) => !s)}
+                      >
+                        {/* user svg — similar a TopNavigation (outline, usa currentColor) */}
+                        <svg className="utility-icon user-svg" xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                          <path d="M20 21v-2a4 4 0 0 0-3-3.87" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                          <path d="M4 21v-2a4 4 0 0 1 3-3.87" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                          <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                        </svg>
+
+                        <span className="utility-username">{user?.signInDetails?.loginId || user?.username}</span>
+                      </button>
+
+
+                      {userMenuOpen && (
+                        <div className="dropdown-menu" role="menu" aria-label="User menu">
+                          <button type="button" className="menu-item" role="menuitem" onClick={() => { setUserMenuOpen(false); handleLogout(); }}>
+                            {/* logout icon */}
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                              <path d="M16 17l5-5-5-5"></path>
+                              <path d="M21 12H9"></path>
+                            </svg>
+                            <span>Logout</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
+
   
               {/* Messages area (scrollable). 'messages-pane' wrapper asegura que el scroll se limite aquí. */}
               <div className="messages-pane">
@@ -1594,8 +1680,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
               <Modal
                 onDismiss={() => setEditModalOpen(false)}
                 visible={editModalOpen}
-                header="Editar nombre del chat"
-                closeAriaLabel="Cerrar"
+                header="Edit chat name"
+                closeAriaLabel="Close"
                 footer={
                   <Box float="right">
                     <SpaceBetween direction="horizontal" size="xs">
@@ -1605,14 +1691,50 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                   </Box>
                 }
               >
-                <FormField label="Nombre del chat" description="Escribe el nuevo nombre.">
+                <FormField label="Chat name" description="Write the new name.">
                   <Input
-                    placeholder="Nombre del chat..."
+                    placeholder="Chat name..."
                     value={editChatName}
                     onChange={(e) => setEditChatName(e.detail.value)}
-                    aria-label="Nombre del chat"
+                    aria-label="Chat name"
                   />
                 </FormField>
+              </Modal>
+
+
+              {/* Modal de confirmación para eliminar chat */}
+              <Modal
+                onDismiss={cancelDeleteChat}
+                visible={showDeleteChatModal}
+                header="Confirmar eliminación"
+                closeAriaLabel="Cerrar"
+                footer={
+                  <Box float="right">
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Button variant="link" onClick={cancelDeleteChat} disabled={Boolean(deletingChatId)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="primary"
+                        loading={Boolean(deletingChatId)}
+                        onClick={confirmDeleteChat}
+                      >
+                        Delete
+                      </Button>
+                    </SpaceBetween>
+                  </Box>
+                }
+              >
+                <div style={{ minWidth: 320 }}>
+                  <p>
+                    Are you sure you want to delete the chat?
+                    {chatToDelete?.chatName ? ` «${chatToDelete.chatName}»` : ''}?
+                    This action will delete the chat and all related messages.
+                  </p>
+                  <p style={{ fontSize: '0.9rem', color: '#666' }}>
+                    This operation is irreversible.
+                  </p>
+                </div>
               </Modal>
 
             </main>

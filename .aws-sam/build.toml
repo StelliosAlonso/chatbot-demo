@@ -45,4 +45,13 @@ manifest_hash = ""
 packagetype = "Zip"
 functions = ["UpdateChatFunction"]
 
+[function_build_definitions.0c120fb2-f707-4030-91a2-bf90d3fb9b34]
+codeuri = "/mnt/data/Documents/aws_certification/work/chatbot/sample-cognito-integrated-bedrock-agents-chat-ui/backend/delete-chat"
+runtime = "python3.12"
+architecture = "x86_64"
+handler = "app.lambda_handler"
+manifest_hash = ""
+packagetype = "Zip"
+functions = ["DeleteChatFunction"]
+
 [layer_build_definitions]

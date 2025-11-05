@@ -1,495 +1,536 @@
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-  }
+/* ============================
+   ChatComponent.css (completo)
+   ============================ */
 
-  :root{
-    --vertical-gap: 40px;
-    --footer-height: 76px; /* altura aproximada del formulario/footer */
-  }
-  
+/* Reset básico */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
-  html, body, #root {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-  }
-  
+/* Layout base */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
 
-  .container-stretch {
-    height: 100% !important;       /* fuerza el alto desde aquí */
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-  }
+/* Container que estira */
+.container-stretch {
+  height: 100% !important;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
 
-  /* Container principal */
-  .chat-component {
-    max-width: 1200px;
-    width: 100%;
-    margin: 20px auto;
-    height: calc(100vh - 40px);
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    overflow: hidden;
-  }
-  
-  /* Card principal */
+/* Componente principal */
+.chat-component {
+  max-width: 1200px;
+  width: 100%;
+  margin: 20px auto;
+  height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Card principal */
+.chat-container {
+  margin: 0;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background: #fff;
+  box-sizing: border-box;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  overflow: hidden;
+  grid-auto-rows: 1fr;
+}
+
+/* Forzar dos columnas */
+.chat-container.two-column {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* Columnas como contenedores flex (crucial: min-height:0) */
+.chat-sidebar,
+.chat-main {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* ----------------------------
+   SIDEBAR
+   ---------------------------- */
+.chat-sidebar {
+  border-right: 1px solid #e6e6e6;
+  padding: 8px;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid #eee;
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fafafa;
+}
+
+.new-chat-btn {
+  background: #0b63d6;
+  color: #ffffff;
+  border: none;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.new-chat-btn:hover { opacity: 0.95; }
+
+.sidebar-nav > div button {
+  background: transparent;
+  border: 1px solid #ddd;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+/* Buscador - estilo minimalista */
+.chat-search {
+  flex: 1;
+  width: 100%;
+  padding: 8px 6px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+  border-radius: 0;
+  outline: none;
+  font-size: 0.95rem;
+  color: inherit;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.chat-search::placeholder {
+  color: rgba(0,0,0,0.35);
+}
+.chat-search:focus {
+  border-bottom-color: rgba(0,0,0,0.95);
+  box-shadow: 0 2px 0 rgba(175,175,175,0.08);
+}
+
+/* Lista de chats */
+.sidebar-list {
+  margin-top: 8px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  padding-right: 6px;
+  min-height: 0;
+}
+
+.sidebar-item {
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  background: transparent;
+  transition: background 0.12s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;  /* referencia para menú contextual */
+  overflow: visible;
+}
+.sidebar-item:hover { background: #f0f0f0; }
+.sidebar-item.selected {
+  background: #eef6ff;
+  border-left: 3px solid #2b9af3;
+  padding-left: 5px;
+}
+
+.sidebar-item-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  min-width: 0;
+  margin-right: 8px;
+  flex: 1 1 auto;
+}
+.chat-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-meta {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 6px;
+}
+
+/* three-dots button */
+.chat-more-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 6px;
+}
+
+.sidebar-item:hover .chat-more-btn { 
+  display: inline-flex; 
+}
+
+/* chat options menu (anchored to sidebar-item) */
+.chat-options-menu {
+  position: absolute;
+  top: 140%;
+  transform: translateY(-50%);
+  right: 10px;
+  left: auto;
+  z-index: 1600;
+  background: #fff;
+  border: 1px solid #ddd;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+  border-radius: 6px;
+  min-width: 140px;
+  padding: 6px 0;
+  box-sizing: border-box;
+}
+
+/* items del menu contextual de chats */
+.chat-options-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: inherit;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.chat-options-menu .menu-item:hover {
+  background: #f5f7fb;
+}
+.chat-options-menu .menu-item + .menu-item {
+  border-top: 1px solid #f1f1f1;
+}
+
+/* =============================
+   MAIN (derecha)
+   ============================= */
+.chat-main {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ----------------------------
+   Top navigation - custom
+   ---------------------------- */
+
+/* topnav wrapper: fondo y visibilidad de overflow para dropdowns */
+.topnav-wrapper {
+  background: #ffffff;
+  color: #000000;
+  height: 64px;
+  display: block;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+  overflow: visible; /* permitir que dropdowns "salgan" */
+}
+
+/* estructura interna de la topnav */
+.custom-topnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  gap: 12px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: visible;
+}
+
+/* título / identidad */
+.identity-title {
+  font-weight: 400;
+  font-size: 1.5rem;
+  color: #000000;
+  line-height: 1;
+  user-select: none;
+}
+
+/* utilities (lado derecho) */
+.utilities {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: visible;
+}
+
+/* cada utility (contenedor) */
+.utility {
+  position: relative; /* referencia para su dropdown */
+  display: inline-flex;
+  align-items: center;
+  z-index: 2200;
+}
+
+/* botón utilitario */
+.utility-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: #4a4a4a;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.utility-btn:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+/* iconos utilitarios (SVGs) */
+.utility-icon,
+.utility-icon * {
+  color: #4a4a4a;
+  stroke: #4a4a4a;
+  fill: #4a4a4a;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+
+/* pequeño margen para icono user */
+.user-svg {
+  margin-right: 6px;
+}
+
+/* nombre del usuario */
+.utility-username {
+  display: inline-block;
+  font-size: 0.95rem;
+  color: #000000;
+}
+
+/* ----------------------------
+   Dropdown menus (Settings / User)
+   ---------------------------- */
+
+/* dropdown: base */
+.custom-topnav .dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  left: auto;
+
+  /* Auto-ajusta al contenido, pero con un mínimo para evitar que quede muy estrecho */
+  width: auto;
+  min-width: 220px;   /* ajusta este valor si quieres más ancho por defecto */
+  max-width: none;    /* permitir que crezca si el contenido lo requiere */
+
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  padding: 6px 0;
+  background: #fff;
+  color: inherit;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 2300;
+  white-space: nowrap; /* evitar wrap a nivel de contenedor */
+}
+
+/* items de dropdown (alinear icon + label) */
+.custom-topnav .dropdown-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: inherit;
+  background: transparent;
+  border: none;
+  width: auto;          /* importante: no forzar 100% si usamos width:max-content en el padre */
+  text-align: left;
+  box-sizing: border-box;
+  cursor: pointer;
+  white-space: nowrap;  /* evita que el label salte a la siguiente línea */
+  overflow: visible;
+}
+
+.custom-topnav .dropdown-menu .menu-item svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  color: #4a4a4a;
+  stroke: #4a4a4a;
+  fill: #4a4a4a;
+}
+
+/* hover visible */
+.custom-topnav .dropdown-menu .menu-item:hover {
+  background: #f5f7fb;
+}
+
+/* ----------------------------
+   Mensajes (centro)
+   ---------------------------- */
+.messages-pane {
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* contenedor de mensajes: scroll interno */
+.messages-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  padding-bottom: calc(76px + 16px); /* evitar solapamiento con footer */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+/* fila / bubble */
+.message-row {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* contenido del mensaje: interlineado reducido */
+.message-content {
+  line-height: 1.25 !important;
+  font-size: 14px;
+  color: inherit;
+}
+
+/* placeholder vacío */
+.messages-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  color: #666;
+  background: transparent;
+  border-radius: 6px;
+}
+
+/* ----------------------------
+   Indicador de agente
+   ---------------------------- */
+.agent-indicator {
+  padding: 8px 12px;
+  border-top: 1px solid #eee;
+  background: #fff;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 15;
+}
+
+/* ----------------------------
+   Footer / input
+   ---------------------------- */
+.message-form {
+  grid-row: 3;
+  padding: 10px;
+  border-top: 1px solid #ccc;
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  position: relative;
+  z-index: 20;
+}
+
+/* Prompt / mic / input buttons inside footer will keep their inline styles */
+
+/* ----------------------------
+   Scrollbars estéticos
+   ---------------------------- */
+.scrollable {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #888 #f1f1f1;
+}
+.scrollable::-webkit-scrollbar { width: 6px; }
+.scrollable::-webkit-scrollbar-track { background: #f1f1f1; }
+.scrollable::-webkit-scrollbar-thumb { background: #888; border-radius: 6px; }
+
+/* Apply the same style to relevant containers */
+.sidebar-list,
+.messages-container {
+  scrollbar-width: thin;
+  scrollbar-color: #888 #f1f1f1;
+}
+.sidebar-list::-webkit-scrollbar,
+.messages-container::-webkit-scrollbar { width: 6px; }
+.sidebar-list::-webkit-scrollbar-track,
+.messages-container::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 6px; }
+.sidebar-list::-webkit-scrollbar-thumb,
+.messages-container::-webkit-scrollbar-thumb { background: #888; border-radius: 6px; }
+.sidebar-list::-webkit-scrollbar-thumb:hover,
+.messages-container::-webkit-scrollbar-thumb:hover { background: #555; }
+
+/* ----------------------------
+   Media queries (responsive)
+   ---------------------------- */
+@media (max-width: 920px) {
   .chat-container {
-    margin: 0;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    background: #fff;
-    box-sizing: border-box;
-    height: 100%;
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    overflow: hidden;
-    grid-auto-rows: 1fr;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
   }
-  
-  /* Dos columnas */
-  .chat-container.two-column {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    height: 100%;
-    box-sizing: border-box;
-  }
-  
-  /* Columnas como flex containers (crucial: min-height:0) */
-  .chat-sidebar,
-  .chat-main {
-    min-height: 0;           /* CRUCIAL: permite que los elementos flex/grid hagan overflow interno */
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-  }
-  
-  /* ---------------- Sidebar ---------------- */
   .chat-sidebar {
-    border-right: 1px solid #e6e6e6;
-    padding: 8px;
-    background: #fafafa;
-    display: flex;
-    flex-direction: column;
-    height: 100%; /* Ocupa toda la altura */
-    overflow: hidden; /* Evita desbordamiento */
-    box-sizing: border-box;
-  }
-  
-  /* Sidebar toolbar: vertical layout (botón nuevo encima, luego buscador) */
-  .sidebar-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 6px 4px;
+    order: 0;
+    width: 100%;
+    border-right: none;
     border-bottom: 1px solid #eee;
-    background: transparent;
-    flex: 0 0 auto; /* No se redimensiona */
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: #fafafa; /* Mismo fondo que sidebar */
+    max-height: 300px;
   }
-  
-  /* Estilo del botón Nuevo (vertical) */
-  .new-chat-btn {
-    background: #0b63d6;
-    color: white;
-    border: none;
-    padding: 8px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 600;
-  }
-
-  
-
-  .new-chat-btn:hover { 
-    opacity: 0.95; 
-  }
-  
-  /* Wrapper para search + refresh en horizontal (debajo del botón) */
-  .sidebar-nav > div button {
-    background: transparent;
-    border: 1px solid #ddd;
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-  
-  /* Search input */
-  .chat-search {
-    flex: 1;
-    width: 100%;
-    padding: 8px 6px;
-    background: transparent;
-    border: none;                       /* quitar el borde completo */
-    border-bottom: 1px solid rgba(0,0,0,0.12); /* unica linea */
-    border-radius: 0;
-    outline: none;
-    font-size: 0.95rem;
-    color: inherit;
-    transition: border-color .12s ease, box-shadow .12s ease;
-  }
-  
-  /* placeholder sutil */
-  .chat-search::placeholder {
-    color: rgba(0,0,0,0.35);
-  }
-
-
-  /* foco: acentuar la linea inferior */
-  .chat-search:focus {
-    border-bottom-color: rgba(0, 0, 0, 0.95);
-    box-shadow: 0 2px 0 rgba(175, 175, 175, 0.08);
-  }
-  
-  /* Lista con scroll */
-  .sidebar-list {
-    margin-top: 8px;
-    overflow-y: auto; /* Solo scroll vertical */
-    flex: 1 1 auto;
-    padding-right: 6px;
-    min-height: 0;
-  }
-  
-  /* Item */
-  .sidebar-item {
-    padding: 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    margin-bottom: 6px;
-    background: transparent;
-    transition: background 0.12s ease;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: relative;
-    overflow: visible; 
-  }
-  .sidebar-item:hover { background: #f0f0f0; }
-  .sidebar-item.selected { background: #eef6ff; border-left: 3px solid #2b9af3; padding-left: 5px; }
-  
-  /* Contenido principal del item (izq) */
-  .sidebar-item-main {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;  /* alinear a la izquierda */
-    text-align: left;
-    min-width: 0;
-    margin-right: 8px;
-    flex: 1 1 auto;           /* ocupar espacio para empujar el botón ⋯ a la derecha */
-  }
-  
-  .chat-name { 
-    font-weight: 600; 
-    font-size: 0.95rem; 
-    white-space: nowrap; 
-    overflow: hidden; 
-    text-overflow: ellipsis; 
-  }
-  
-  .chat-meta { 
-    font-size: 0.75rem; 
-    color: #666; 
-    margin-top: 6px; 
-  }
-  
-  /* Three-dot button (hidden por defecto, visible al hover) */
-  .chat-more-btn {
-    display: none;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 4px 6px;
-    font-size: 18px;
-    line-height: 1;
-  }
-  .sidebar-item:hover .chat-more-btn { 
-    display: inline-flex; 
-  }
-  
-  /* ---------------- Main (columna derecha) ---------------- */
   .chat-main {
-    display: grid;
-    grid-template-rows: auto 1fr auto; /* topnav / messages / footer */
-    min-height: 0;      /* CRUCIAL para que 1fr respete overflow interno */
-    height: 100%;
-    box-sizing: border-box;
+    order: 1;
+    height: auto;
+    min-height: 400px;
   }
-  
-  /* Mantener TopNavigation visible */
-  .topnav-wrapper {
-    background-color: #ffffff !important;      /* gris oscuro */
-    border-bottom: 0.5px solid #cacaca !important;
-  }
-
-/*   */
-  /* Forzar el fondo en elementos hijos que la librería pueda crear */
-  .topnav-wrapper > * ,
-  .topnav-wrapper [class*="topnav"],
-  .topnav-wrapper [class*="TopNavigation"],
-  .topnav-wrapper [class*="top-navigation"]{
-    background-color: transparent !important;   /* hacemos transparente en hijos para que se vea el color del wrapper */
-    color: #fff !important;
-    border-bottom: 1px solid #ffffff !important;
-  }
-
-  /* Neutralizar el "link" del título dentro del TopNavigation */
-  .topnav-wrapper a,
-  .topnav-wrapper a:link,
-  .topnav-wrapper a:visited,
-  .topnav-wrapper a:hover,
-  .topnav-wrapper a:active,
-  .topnav-wrapper a:focus {
-    pointer-events: none !important;    /* evita clics / hover events */
-    color: rgb(0, 0, 0);          
-    text-decoration: none !important;   /* quita subrayado */
-    cursor: default !important;         /* cursor normal */
-    background: transparent !important;
-    box-shadow: none !important;
-  }
-
-  /* Texto */
-  .topnav-wrapper,
-  .topnav-wrapper * {
-    color: #000000 !important;
-  }
-
-  /* Iconos / SVGs / textos dentro del topnav */
-  .topnav-wrapper svg,
-  .topnav-wrapper path,
-  .topnav-wrapper *[class*="icon"],
-  .topnav-wrapper button,
-  .topnav-wrapper .awsui-button {
-    color: #000000 !important;
-    stroke: #000000 !important;
-  }
-
-  .topnav-wrapper:hover svg,
-  .topnav-wrapper:hover path,
-  .topnav-wrapper:hover *[class*="icon"],
-  .topnav-wrapper:hover button,
-  .topnav-wrapper:hover {
-    color: #505050 !important;
-    stroke: #575757 !important;
-  }
-
-  .topnav-wrapper [class*="awsui"] {
-    background-color: white;
-  }
-
-  
-  /* messages-pane ocupa el espacio restante */
-  .messages-pane {
-    grid-row: 2;
-    min-height: 0;     /* CRUCIAL para que el scroll se mantenga interno */
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;  /* el scroll real será dentro de .messages-container */
-    position: relative;
-  }
-  
-  /* Contenedor de mensajes siempre mantiene tamaño (min-height) y permite scroll interno */
-  .messages-container {
-    flex: 1 1 auto;
-    min-height: 0;                /* importante */
-    overflow-y: auto;             /* <<-- Aquí debe salir la barra de scroll */
-    padding: 16px;
-    padding-bottom: calc(var(--footer-height) + 16px); /* evita que el último mensaje quede oculto por el footer */
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    box-sizing: border-box;
-  }
-  
-  /* fila de mensaje */
-  .message-row {
-    display: block;
-    width: 100%;
-    box-sizing: border-box;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-  }
-  
-  /* contenido dentro del bubble */
-  .message-content {
-    line-height: 1.25 !important;    /* reduce el interlineado (ajusta a tu gusto: 1.0 - 1.25) */
-    font-size: 14px;                 /* opcional: tamaño de fuente */
-    color: inherit;
-  }
-  
-
-  
-  /* placeholder vacio */
-  .messages-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 160px;
-    color: #666;
-    background: transparent;
-    border-radius: 6px;
-  }
-  
-
-  
-  /* Agent-processing indicator */
-  .agent-indicator {
-    padding: 8px 12px;
-    border-top: 1px solid #eee;
-    background: #fff;
-    flex: 0 0 auto;    /* ocupa su espacio sin overlay */
-    position: relative; /* NO sticky bottom */
-    z-index: 15;
-  }
-  
-  /* Footer / formulario */
-  .message-form {
-    grid-row: 3;
-    padding: 10px;
-    border-top: 1px solid #ccc;
-    flex: 0 0 auto;
-    width: 100%;
-    box-sizing: border-box;
-    background: #fff;
-    position: relative;  /* NO sticky bottom */
-    z-index: 20;
-  }
-  
-  
-  /* Scrollbars estéticos */
-  .scrollable {
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    scrollbar-color: #888 #f1f1f1;
-  }
-  .scrollable::-webkit-scrollbar { width: 6px; }
-  .scrollable::-webkit-scrollbar-track { background: #f1f1f1; }
-  .scrollable::-webkit-scrollbar-thumb { background: #888; border-radius: 6px; }
-
-
-
-
-  /* Mejorar el scroll en áreas específicas */
-  .sidebar-list,
-  .messages-container {
-    scrollbar-width: thin;
-    scrollbar-color: #888 #f1f1f1;
-  }
-
-  .sidebar-list::-webkit-scrollbar,
-  .messages-container::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  .sidebar-list::-webkit-scrollbar-track,
-  .messages-container::-webkit-scrollbar-track {
-    background: #f1f1f1;
-    border-radius: 6px;
-  }
-
-  .sidebar-list::-webkit-scrollbar-thumb,
-  .messages-container::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 6px;
-  }
-
-  .sidebar-list::-webkit-scrollbar-thumb:hover,
-  .messages-container::-webkit-scrollbar-thumb:hover {
-    background: #555;
-  }
-
-
-
-  /* Responsive */
-  @media (max-width: 920px) {
-    .chat-container {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
-    }
-    
-    .chat-sidebar {
-      order: 0;
-      width: 100%;
-      border-right: none;
-      border-bottom: 1px solid #eee;
-      max-height: 300px; /* Altura máxima en móvil */
-    }
-    
-    .chat-main {
-      order: 1;
-      height: auto;
-      min-height: 400px;
-    }
-    
-    .sidebar-nav {
-      position: relative; /* En móvil no sticky */
-    }
-  }
-  
-  /* Botones pequeños */
-  .refresh-messages-btn {
-    background: transparent;
-    border: 1px solid #ddd;
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-  }
-
-
-
-  /* botón de tres puntos */
-  .chat-more-btn {
-    background: transparent;
-    border: none;
-    padding: 6px;
-    position: relative;
-    cursor: pointer;
-    font-size: 16px;
-    line-height: 1;
-    border-radius: 6px;
-  }
-  .chat-more-btn:hover { 
-    background: rgba(0,0,0,0.04); 
-  }
-
-  /* menú contextual (floating) */
-  .chat-options-menu {
-    position: absolute;
-    top: 150%;                         /* centrar verticalmente respecto al item */
-    transform: translateY(-50%);      /* alinear exactamente centro */
-    right: 10px;                      /* distancia desde el borde derecho del item (ajusta si quieres) */
-    z-index: 600;
-    background: #fff;
-    border: 1px solid #ddd;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
-    border-radius: 6px;
-    min-width: 140px;                 /* más compacto si quieres */
-    padding: 6px 0;
-    white-space: nowrap;
-  }
-
-  /* items del menú */
-  .chat-options-menu .menu-item {
-    display: block;
-    width: 100%;
-    padding: 8px 12px;
-    background: transparent;
-    border: none;
-    text-align: left;
-    cursor: pointer;
-    font-size: 0.95rem;
-  }
-  .chat-options-menu .menu-item:hover {
-    background: #f5f7fb;
-  }
-
-  /* si quieres un pequeño separador */
-  .chat-options-menu .menu-item + .menu-item {
-    border-top: 1px solid #f1f1f1;
-  }
+  .sidebar-nav { position: relative; }
+}

@@ -345,6 +345,33 @@ Resources:
 
 
 
+  # --------------------------------------- [LAMBDA ELIMINAR CHAT + MENSAJES] ---------------------------------------
+  DeleteChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-delete-chat"
+      Description: "Elimina un chat y todos sus mensajes en DynamoDB (DELETE /chats/{chatId})"
+      CodeUri: backend/delete-chat/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          CHAT_TABLE: !Ref PetsChatbotTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PetsChatbotTable
+      Events:
+        ApiDeleteChat:
+          Type: Api
+          Properties:
+            Path: /chats/{chatId}
+            Method: delete
+            RestApiId: !Ref ChatApi
+
+
+
 
   # --------------------------------------- [-----------------------------------------] ---------------------------------------
 
