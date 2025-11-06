@@ -81,6 +81,13 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   // Flag to determine if using AgentCore Agent
   const [isAgentCoreAgent, setIsAgentCoreAgent] = useState(false);
 
+
+
+  const [chats, setChats] = useState([]);               // lista de chats del usuario
+  const [selectedChat, setSelectedChat] = useState(null); // { chatId, chatName }
+  const [loadingChats, setLoadingChats] = useState(false);
+
+
   /**
   * Scrolls the chat window to the most recent message
   * Uses smooth scrolling behavior for better user experience
@@ -217,14 +224,27 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
       const data = await response.json();
       console.log("✅ Chat creado exitosamente:", data);
 
-      setShowNewChatModal(false);
-      setChatName("");
 
       // Retrieve data from lambda
-      const newChatId = data.chatId; 
+      const newChatId = data.chatId;
+      const createdAt = data.createdAt || new Date().toISOString();
+      const newChatObj = {
+        chatId: newChatId,
+        chatName: chatName || data.chatName || "Chat sin nombre",
+        createdAt,
+      };
 
-      // Crear sesión local para este chat
+      // Actualizar estado de chats (poner el nuevo arriba) y seleccionarlo
+      setChats(prev => [newChatObj, ...(prev || [])]);
+      setSelectedChat(newChatObj);
+
+      // Crear sesión local para este chat (limpia mensajes, marca lastSessionId)
       createNewSession(newChatId);
+      // Aseguramos que sessionId quede sincronizado
+      setSessionId(newChatId);
+      // limpiamos modal y nombre
+      setShowNewChatModal(false);
+      setChatName("");
 
     } catch (error) {
       console.error("❌ Error al crear el chat:", error);
@@ -515,6 +535,169 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   };
 
 
+
+  // ----- Helper para obtener token (reusa ensureAuthModule)
+  const getAuthToken = async () => {
+    try {
+      const AuthModule = await ensureAuthModule();
+      if (!AuthModule) return null;
+
+      // Varias formas dependiendo de la versión de Amplify
+      if (typeof AuthModule.currentSession === 'function') {
+        const sess = await AuthModule.currentSession();
+        return (sess?.getIdToken?.()?.getJwtToken?.()) || (sess?.idToken?.jwtToken) || null;
+      } else if (typeof AuthModule.fetchAuthSession === 'function') {
+        const s = await AuthModule.fetchAuthSession();
+        return s?.tokens?.idToken || s?.idToken?.jwtToken || null;
+      } else if (typeof AuthModule.currentAuthenticatedUser === 'function') {
+        const cu = await AuthModule.currentAuthenticatedUser();
+        return cu?.signInUserSession?.idToken?.jwtToken || cu?.idToken?.jwtToken || null;
+      }
+      return null;
+    } catch (err) {
+      console.debug('getAuthToken error:', err);
+      return null;
+    }
+  };
+
+  // ----- Obtener email del usuario (para fallback si tu GET /chats lo requiere)
+  const getUserEmail = async () => {
+    try {
+      const AuthModule = await ensureAuthModule();
+      if (!AuthModule) return null;
+      if (typeof AuthModule.getCurrentUser === 'function') {
+        const u = await AuthModule.getCurrentUser();
+        return u?.signInDetails?.loginId || u?.username || u?.attributes?.email || null;
+      } else if (typeof AuthModule.currentAuthenticatedUser === 'function') {
+        const u = await AuthModule.currentAuthenticatedUser();
+        // amplify v6 shapes vary
+        return u?.username || u?.attributes?.email || null;
+      }
+      return null;
+    } catch (e) {
+      console.debug('getUserEmail error:', e);
+      return null;
+    }
+  };
+
+  // ----- fetchUserChats: obtiene lista de chats del backend
+  const fetchUserChats = async () => {
+    setLoadingChats(true);
+    try {
+      const token = await getAuthToken();
+      const email = await getUserEmail();
+
+      // Intentar llamar con Authorization primero; si backend necesita email como query param, pasarlo también
+      let url = API_URL; // asumes API_URL apunta a .../chats (según tu uso en handleConfirmCreate)
+      if (email && !url.includes('?')) {
+        url = `${url}?email=${encodeURIComponent(email)}`; // fallback amigable
+      }
+
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+
+      if (!resp.ok) {
+        console.warn('fetchUserChats: respuesta no OK', resp.status);
+        setChats([]);
+        return;
+      }
+
+      const data = await resp.json();
+      // Esperamos que el endpoint devuelva un array de items tipo { chatId, chatName, createdAt }
+      // Si devuelve items estilo Dynamo (PK/SK), transformamos
+      if (Array.isArray(data)) {
+        setChats(data.map(item => ({
+          chatId: item.chatId || (item.SK || '').replace(/^CHAT#/, ''),
+          chatName: item.chatName || item.chatName || (item.chatName ? item.chatName : 'Chat sin nombre'),
+          createdAt: item.createdAt || item.createdAt
+        })));
+      } else if (data.Items) {
+        // si devolviera un objeto con "Items"
+        setChats(data.Items.map(it => ({
+          chatId: it.SK?.replace(/^CHAT#/, '') || it.chatId,
+          chatName: it.chatName || it.title || 'Chat',
+          createdAt: it.createdAt
+        })));
+      } else {
+        setChats([]);
+      }
+    } catch (err) {
+      console.error('fetchUserChats error:', err);
+      setChats([]);
+    } finally {
+      setLoadingChats(false);
+    }
+  };
+
+  // ----- fetchChatMessages: obtiene mensajes desde backend
+  const fetchChatMessages = async (chatId) => {
+    if (!chatId) return [];
+    try {
+      const token = await getAuthToken();
+      const resp = await fetch(`${API_URL}/${chatId}/messages`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+
+      if (!resp.ok) {
+        console.warn('fetchChatMessages: response not ok', resp.status);
+        return [];
+      }
+      const data = await resp.json();
+      // Si tu lambda devuelve Items (Dynamo) -> convertir a {text, sender}
+      if (Array.isArray(data)) {
+        return data.map(it => ({ text: it.message || it.text || '', sender: it.sender || 'agent' }));
+      } else if (data.Items) {
+        // ordenar por SK si quieres mantener orden cronológico (SK: MSG#timestamp#id)
+        const items = data.Items.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+        return items.map(it => ({ text: it.message, sender: it.sender, createdAt: it.createdAt }));
+      } else {
+        return [];
+      }
+    } catch (err) {
+      console.error('fetchChatMessages error:', err);
+      return [];
+    }
+  };
+
+  // ----- handleSelectChat: al click de un chat en la sidebar
+  const handleSelectChat = async (chat) => {
+    try {
+      setSelectedChat(chat);
+      setSessionId(chat.chatId);
+      // load messages from server
+      const msgs = await fetchChatMessages(chat.chatId);
+      // Mensajes estarán en formato { text, sender }
+      setMessages(msgs);
+      // persistir en localStorage para experiencia offline / cache
+      localStorage.setItem(`messages_${chat.chatId}`, JSON.stringify(msgs));
+      localStorage.setItem('lastSessionId', chat.chatId);
+      // scroll
+      scrollToBottom();
+    } catch (err) {
+      console.error('handleSelectChat error:', err);
+    }
+  };
+
+  // ----- useEffect: cargar lista de chats cuando user o API cambia o al crear un chat
+  useEffect(() => {
+    // si no hay user, salir
+    if (!user) return;
+    fetchUserChats();
+  }, [user, sessionId]); // sessionId incluido para refrescar cuando creas nuevo chat
+
+
+  
+
+  
   // -------------------------------
   // useEffect(fetchCredentials) actualizado (espera initializeAmplifyFromAppConfig)
   // -------------------------------
@@ -788,7 +971,15 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     // Clear input field (UX)
     const originalMessage = newMessage;
     setNewMessage('');
-    const userMessage = { text: originalMessage, sender: user.username };
+
+    // obtener id consistente del usuario (preferimos el email que guardamos en userIdForMessages)
+    let senderId = userIdForMessages;
+    if (!senderId) {
+      try { senderId = await getUserEmail() || user?.username; } catch (e) { senderId = user?.username; }
+    }
+
+    // userMessage ahora usa el mismo senderId que guardaremos en backend
+    const userMessage = { text: originalMessage, sender: senderId || user?.username };
     setMessages(prev => [...prev, userMessage]);
     setIsAgentResponding(true);
 
@@ -830,10 +1021,10 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
         console.error("❌ Error obteniendo email del usuario:", emailErr);
       }
 
-      // Guardar mensaje del usuario
-      await storeMessage({ chatId: sessionId, message: originalMessage, sender: email });
+      // Guardar mensaje del usuario (usa senderId consistente)
+      await storeMessage({ chatId: sessionId, message: originalMessage, sender: senderId });
 
-      // Guardar respuesta del agente
+      // Guardar la respuesta del agente conservando el agentName
       await storeMessage({ chatId: sessionId, message: replyText, sender: agentName.value || "Agent" });
 
       // Append agent message and persist both user+agent messages
@@ -882,242 +1073,677 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     }
   };
 
-  return (
-    // <ContentLayout
-    //   defaultPadding
-    //   header={
-    <div className="chat-component">
-      <Container stretch>
-        <div className="chat-container">
-          <TopNavigation
-            identity={{
-              href: "#",
-              title: `Chat with Nova Micro`,
-            }}
-            utilities={
-              [
-                //This is the button to start a new conversation
-                {
-                  type: "button",
-                  iconName: "add-plus",
-                  title: "Start a new conversation",
-                  ariaLabel: "Start a new conversation",
-                  disableUtilityCollapse: true,
-                  onClick: () => setShowNewChatModal(true)
-                },
-                //This is the settings handler
-                {
-                  type: "menu-dropdown",
-                  iconName: "settings",
-                  ariaLabel: "Settings",
-                  title: "Settings",
-                  disableUtilityCollapse: true,
-                  onItemClick: ({ detail }) => {
-                    switch (detail.id) {
-                      case "edit-settings":
-                        onConfigEditorClick();
-                        break;
-                      case "clear-settings":
-                        handleClearData();
-                        break;
-                    }
-                  },
-                  items: [
-                    {
-                      id: "clear-settings",
-                      type: "button",
-                      iconName: "remove",
-                      text: "Clear settings and local storage",
-                    },
-                    {
-                      id: "edit-settings",
-                      text: "Edit Settings",
-                      iconName: "edit",
-                      type: "icon-button",
-                    }
-                  ]
-                },
-                //This is the user session menu options
-                {
-                  type: "menu-dropdown",
-                  text: user.signInDetails?.loginId || user.username,  // Change this
-                  iconName: "user-profile",
-                  title: user.signInDetails?.loginId || user.username, // Change this
-                  ariaLabel: "User",
-                  disableUtilityCollapse: true,
-                  onItemClick: ({ detail }) => {
-                    switch (detail.id) {
-                      case "logout":
-                        handleLogout();
-                        break;
-                    }
-                  },
-                  items: [
-                    {
-                      id: "logout",
-                      text: "Logout",
-                      iconName: "exit",
-                      type: "icon-button",
-                    }
-                  ]
-                }
-              ]
-            }
-          />
-          {/* <div className="chat-header">
-                <div className="header-buttons">
+
+
+  // Identificador estable para comparar remitentes (preferimos email si está disponible)
+  const [userIdForMessages, setUserIdForMessages] = useState(user?.username || null);
+
+  // Cuando cambie `user`, intentar resolver email y guardarlo en userIdForMessages
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const email = await getUserEmail(); // tu helper ya definido en el componente
+        if (mounted) setUserIdForMessages(email || user?.username || null);
+      } catch (e) {
+        if (mounted) setUserIdForMessages(user?.username || null);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [user]);
+
+
+
+  // --- Formateo de fechas al huso horario del usuario ---
+  const userTimeZone = (typeof Intl !== 'undefined' && Intl.DateTimeFormat)
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : undefined;
+
+  const formatToUserTZ = (isoString) => {
+    if (!isoString) return '';
+    try {
+      // Si el string es un ISO sin zona (ej. "2025-11-04T17:41:29.329622")
+      // añadimos 'Z' para forzar que JS lo trate como UTC.
+      const isoNoZoneRegex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+      let normalized = isoString;
+      if (isoNoZoneRegex.test(isoString.trim())) {
+        normalized = isoString.trim() + 'Z';
+      }
+      const d = new Date(normalized); // ahora interpretará correctamente como UTC si viene con Z o +00:00
+
+      const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: userTimeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      return fmt.format(d).replace(',', '');
+    } catch (e) {
+      // fallback manual
+      const d = new Date(isoString);
+      const pad = (n) => String(n).padStart(2, '0');
+      const mm = pad(d.getMonth() + 1);
+      const dd = pad(d.getDate());
+      const yyyy = d.getFullYear();
+      const hh = pad(d.getHours());
+      const min = pad(d.getMinutes());
+      return `${mm}/${dd}/${yyyy} ${hh}:${min}`;
+    }
+  };
+
+
+  // Control menú de opciones por chat (chatId o null)
+  const [menuOpenFor, setMenuOpenFor] = useState(null);
+
+  // Edit modal state
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editChatId, setEditChatId] = useState(null);
+  const [editChatName, setEditChatName] = useState('');
+
+  // Toggle menú
+  const toggleMenu = (chatId) => {
+    setMenuOpenFor((prev) => (prev === chatId ? null : chatId));
+  };
+
+  // Abrir modal edición
+  const openEditModal = (chat) => {
+    setEditChatId(chat.chatId);
+    setEditChatName(chat.chatName || '');
+    setEditModalOpen(true);
+    setMenuOpenFor(null);
+  };
+
+  // Confirmar edición (actualiza local y opcionalmente backend)
+  const confirmEditChat = async () => {
+    if (!editChatId) return;
+    const newName = (editChatName || '').trim();
+    if (!newName) { alert('El nombre no puede estar vacío.'); return; }
+  
+    // Actualizar localmente (UX inmediata)
+    setChats(prev => prev.map(c => c.chatId === editChatId ? { ...c, chatName: newName } : c));
+    if (selectedChat?.chatId === editChatId) {
+      setSelectedChat(prev => prev ? ({ ...prev, chatName: newName }) : prev);
+    }
+  
+    // Obtener email del usuario para poder localizar el item en Dynamo
+    let email = null;
+    try {
+      if (typeof getUserEmail === 'function') {
+        email = await getUserEmail();
+      }
+    } catch (e) {
+      console.warn('No se pudo obtener email del usuario para la actualización:', e);
+    }
+  
+    // Enviar al backend: incluir email si lo tienes
+    try {
+      const token = await getAuthToken().catch(() => null);
+      const body = { chatName: newName, ...(email ? { email } : {}) };
+  
+      const resp = await fetch(`${API_URL}/${editChatId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(body),
+      });
+  
+      if (!resp.ok) {
+        // Si falla, opcionalmente reintentar o avisar
+        console.warn('Rename request failed', resp.status);
+      } else {
+        // Si backend devuelve el item actualizado, podrías actualizar localmente con lo que responda:
+        try {
+          const data = await resp.json().catch(() => null);
+          if (data && data.chatName) {
+            setChats(prev => prev.map(c => c.chatId === editChatId ? ({ ...c, chatName: data.chatName }) : c));
+          }
+        } catch (e) { /* ignore */ }
+      }
+    } catch (err) {
+      console.debug('PUT rename error:', err);
+    }
+  
+    setEditModalOpen(false);
+    setEditChatId(null);
+    setEditChatName('');
+  };
+  
+
+
+  // modal + control de borrado
+  const [showDeleteChatModal, setShowDeleteChatModal] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState(null);     // objeto chat seleccionado para borrar
+  const [deletingChatId, setDeletingChatId] = useState(null); // chatId que actualmente se está borrando (para loading)
+
+  // cuando el usuario pulsa "Delete" en el menú: abre el modal de confirmación
+  const handleDeleteChat = (chat) => {
+    // cerrar cualquier menú abierto
+    setMenuOpenFor(null);
+
+    // abrir modal y almacenar referencia al chat a borrar
+    setChatToDelete(chat);
+    setShowDeleteChatModal(true);
+  };
+
+  const confirmDeleteChat = async () => {
+    if (!chatToDelete) return;
+  
+    const chatId = chatToDelete.chatId;
+    setDeletingChatId(chatId);
+  
+    // marcar optimista (opcional)
+    setChats(prev => prev.map(c => c.chatId === chatId ? ({ ...c, deleting: true }) : c));
+  
+    try {
+      const token = await getAuthToken().catch(() => null);
+  
+      const resp = await fetch(`${API_URL}/${chatId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+  
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(`Server returned ${resp.status} ${body}`);
+      }
+  
+      // BORRADO OK: actualizar UI local
+      setChats(prev => prev.filter(x => x.chatId !== chatId));
+      localStorage.removeItem(`messages_${chatId}`);
+  
+      if (selectedChat?.chatId === chatId) {
+        setSelectedChat(null);
+        setSessionId(null);
+        setMessages([]);
+      }
+  
+      // cerrar modal y limpiar estados
+      setShowDeleteChatModal(false);
+      setChatToDelete(null);
+      setDeletingChatId(null);
+  
+    } catch (err) {
+      console.error('DELETE chat error:', err);
+      // revertir marca de deleting
+      setChats(prev => prev.map(c => c.chatId === chatId ? ({ ...c, deleting: false }) : c));
+      setDeletingChatId(null);
+      alert('No se pudo eliminar el chat en el servidor. Revisa la consola para más detalle.');
+    }
+  };
+
+  const cancelDeleteChat = () => {
+    setShowDeleteChatModal(false);
+    setChatToDelete(null);
+  };
+  
+
+
+
+  // Cerrar menú cuando se cambia de chat
+  useEffect(() => {
+    setMenuOpenFor(null);
+  }, [selectedChat?.chatId]);
+
+  useEffect(() => {
+    if (!menuOpenFor) return;
+    const onDocClick = () => setMenuOpenFor(null);
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [menuOpenFor]);
+  
+
+  // dentro de ChatComponent (arriba del return)
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const settingsRef = useRef(null);
+  const userMenuRef = useRef(null);
+
+  useEffect(() => {
+    function handleDocClick(e) {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) setSettingsOpen(false);
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) setUserMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleDocClick);
+    return () => document.removeEventListener('mousedown', handleDocClick);
+  }, []);
+
+
+  return (() => {
+    // calcular índice de la última respuesta enviada por el agente (sender distinto a user.username)
+    const lastAgentIndex = messages.reduce((acc, m, i) => (m.sender !== user.username ? i : acc), -1);
+  
+    return (
+      <div className="chat-component">
+        <div className="container-stretch">
+          <div className="chat-container two-column">
+  
+            {/* ---------------------- SIDEBAR - Lista de chats ---------------------- */}
+            <aside className="chat-sidebar" aria-label="Lista de chats">
+              {/* Sidebar vertical: Nuevo arriba y luego buscador */}
+              <div className="sidebar-nav" role="toolbar" aria-label="Sidebar navigation">
+                <button
+                  type="button"
+                  className="new-chat-btn"
+                  onClick={() => setShowNewChatModal(true)}
+                  title="Nuevo chat"
+                  aria-label="Crear nuevo chat"
+                >
+                  New Chat
+                </button>
+  
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <input
+                    type="search"
+                    className="chat-search"
+                    placeholder="Search chats..."
+                    onChange={(e) => {
+                      const q = e.target.value.toLowerCase();
+                      setChats(prev => prev.map(c => ({ ...c, _visible: String(c.chatName || '').toLowerCase().includes(q) })));
+                    }}
+                    aria-label="Search chats"
+                  />
                 </div>
-              </div> */}
-          <div className="messages-container scrollable">
-            {messages.map((message, index) => (
-              <div key={index}>
-                <ChatBubble
-                  ariaLabel={`${message.sender} message`}
-                  type={message.sender === user.username ? "outgoing" : "incoming"}
-                  avatar={
-                    <Avatar
-                      ariaLabel={message.sender}
-                      tooltipText={message.sender}
-                      color={message.sender === user.username ? "default" : "gen-ai"}
-                      initials={message.sender.substring(0, 2).toUpperCase()}
-                    />
-                  }
-                >
-                  {message.text.split('\n').map((line, i) => (
-                    <ReactMarkdown
-                      key={'md-rendering' + i}
-                      rehypePlugins={[rehypeRaw]} // Enables HTML parsing
-                    >
-                      {line}
-                    </ReactMarkdown>
-                  ))}
-                </ChatBubble>
               </div>
-            ))}
-            <div ref={messagesEndRef} />
-            {isAgentResponding && (
-              <LiveRegion>
-                <Box
-                  margin={{ bottom: "xs", left: "l" }}
-                  color="text-body-secondary"
+  
+              {/* Lista con scroll */}
+              <div className="sidebar-list" role="list">
+                {loadingChats && <div className="sidebar-empty">Loading...</div>}
+  
+                {!loadingChats && chats.length === 0 && (
+                  <div className="sidebar-empty">
+                    No tienes chats aún. Crea uno nuevo con «Nuevo».
+                  </div>
+                )}
+  
+                {!loadingChats && chats.filter(c => c._visible !== false).map((c) => (
+                <div
+                  key={c.chatId}
+                  className={`sidebar-item ${selectedChat?.chatId === c.chatId ? 'selected' : ''}`}
+                  onClick={() => handleSelectChat(c)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleSelectChat(c); }}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selectedChat?.chatId === c.chatId}
                 >
-                  {!isStrandsAgent && tasksCompleted.count > 0 && (
-                    <div>
-                      {agentName.value} is working on your request | Tasks completed ({tasksCompleted.count})
-                      <br />
-                      <i>{tasksCompleted.latestRationale}</i>
-                    </div>
-                  )}
-                  {isStrandsAgent && (
-                    <div>
-                      {agentName.value} is processing your request...
-                    </div>
-                  )}
-                  <LoadingBar variant="gen-ai" />
-                </Box>
-              </LiveRegion>
-            )}
-          </div>
-          <form onSubmit={handleSubmit} className="message-form">
-            <Form
-            >
-              <FormField stretch>
-                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <div className="sidebar-item-main">
+                    <div className="chat-name">{c.chatName || 'Chat sin nombre'}</div>
+                    <div className="chat-meta">{c.createdAt ? formatToUserTZ(c.createdAt) : ''}</div>
+                  </div>
+
+                  {/* three-dot actions (abre menu contextual) */}
                   <button
-                    type="button"
-                    onClick={isListening ? stopListening : startListening}
-                    title={isListening ? "Stop Listening" : "Start Listening"}
-                    className="mic-button"
-                    hidden={!speechRecognitionSupported}
+                    className="chat-more-btn"
+                    title="Más opciones"
+                    aria-label={`Más opciones de ${c.chatName || 'chat'}`}
+                    onClick={(e) => {
+                      e.stopPropagation();            // evitar seleccionar el chat
+                      toggleMenu(c.chatId);
+                    }}
                   >
-                    {isListening ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" height="28" width="28" fill="red" viewBox="0 0 24 24">
-                        <path d="M12 14q-1.25 0-2.125-.875T9 11V5q0-1.25.875-2.125T12 2q1.25 0 2.125.875T15 5v6q0 1.25-.875 2.125T12 14Zm-1 7v-3.1q-2.875-.35-4.437-2.35Q5 13.55 5 11h2q0 2.075 1.463 3.538Q9.925 16 12 16q2.075 0 3.538-1.462Q17 13.075 17 11h2q0 2.55-1.563 4.55-1.562 2-4.437 2.35V21Z" />
-                      </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" height="28" width="28" fill="black" viewBox="0 0 24 24">
-                        <path d="M12 14q-1.25 0-2.125-.875T9 11V5q0-1.25.875-2.125T12 2q1.25 0 2.125.875T15 5v6q0 1.25-.875 2.125T12 14Zm-1 7v-3.1q-2.875-.35-4.437-2.35Q5 13.55 5 11h2q0 2.075 1.463 3.538Q9.925 16 12 16q2.075 0 3.538-1.462Q17 13.075 17 11h2q0 2.55-1.563 4.55-1.562 2-4.437 2.35V21Z" />
-                      </svg>
-                    )}
+                    ⋯
                   </button>
-                  <div style={{ flex: 1 }}>
-                    <PromptInput
-                      type='text'
-                      value={newMessage}
-                      onChange={({ detail }) => setNewMessage(detail.value)}
-                      placeholder='Type your question here...'
-                      actionButtonAriaLabel="Send message"
-                      actionButtonIconName="send"
-                    />
+
+                  {/* Menú contextual */}
+                  {menuOpenFor === c.chatId && (
+                    <div
+                      className="chat-options-menu"
+                      role="menu"
+                      aria-label={`Opciones de ${c.chatName || 'chat'}`}
+                      onClick={(e) => e.stopPropagation()} // impedir cerrar por el listener global
+                    >
+                      <button
+                        className="menu-item"
+                        role="menuitem"
+                        onClick={() => openEditModal(c)}
+                      >
+                        ✎ Edit name
+                      </button>
+                      <button
+                        className="menu-item"
+                        role="menuitem"
+                        onClick={() => handleDeleteChat(c)}
+                      >
+                        🗑 Delete chat
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+              </div>
+            </aside>
+  
+            {/* ---------------------- MAIN - Chat UI existente ---------------------- */}
+            <main className="chat-main">
+              {/* Top navigation - custom (usa solo divs) */}
+              <div className="topnav-wrapper">
+                <div className="custom-topnav" role="navigation" aria-label="Top navigation">
+                  <div className="identity" aria-hidden={false}>
+                    <div className="identity-title">Chat with Nova Micro</div>
+                  </div>
+
+                  <div className="utilities" aria-hidden={false}>
+                    {/* Settings dropdown */}
+                    <div className="utility" ref={settingsRef}>
+                      <button
+                        type="button"
+                        className="utility-btn"
+                        aria-haspopup="true"
+                        aria-expanded={settingsOpen}
+                        aria-label="Settings"
+                        onClick={() => setSettingsOpen((s) => !s)}
+                      >
+                        <svg className="utility-icon" xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 1-1.51-.42 1.65 1.65 0 0 0-2.43 0 1.65 1.65 0 0 1-1.52.42 1.65 1.65 0 0 0-1.82.33l-.06.06A2 2 0 0 1 4.93 19.07l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 1 .42-1.51 1.65 1.65 0 0 0 0-2.43 1.65 1.65 0 0 1-.42-1.51 1.65 1.65 0 0 0 .33-1.82l.06-.06A2 2 0 0 1 7.07 4.93l.06.06a1.65 1.65 0 0 0 1.82.33c.5-.22 1.05-.22 1.51.42.46.64 1.36.64 1.82 0 .46-.64 1.01-.64 1.51-.42a1.65 1.65 0 0 0 1.82-.33l.06-.06A2 2 0 0 1 19.07 4.93l-.06.06a1.65 1.65 0 0 0-.33 1.82c.22.5.22 1.05-.42 1.51-.64.46-.64 1.36 0 1.82.64.46.64 1.36 0 1.82-.64.46-.64 1.36 0 1.82z" />
+                          <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                      </button>
+
+
+                      {settingsOpen && (
+                        <div className="dropdown-menu" role="menu" aria-label="Settings menu">
+                          <button
+                            type="button"
+                            className="menu-item"
+                            role="menuitem"
+                            onClick={() => { setSettingsOpen(false); handleClearData(); }}
+                          >
+                            {/* icon - refresh */}
+                            <span>🗑 Clear settings and local storage</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            className="menu-item"
+                            role="menuitem"
+                            onClick={() => { setSettingsOpen(false); onConfigEditorClick(); }}
+                          >
+                            {/* icon - pencil (edit) */}
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                              <path d="M12 20h9"></path>
+                              <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            <span>Edit Settings</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* User dropdown */}
+                    <div className="utility" ref={userMenuRef}>
+                      <button
+                        type="button"
+                        className="utility-btn"
+                        aria-haspopup="true"
+                        aria-expanded={userMenuOpen}
+                        aria-label="User menu"
+                        onClick={() => setUserMenuOpen((s) => !s)}
+                      >
+                        {/* user svg — similar a TopNavigation (outline, usa currentColor) */}
+                        <svg className="utility-icon user-svg" xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+                          <path d="M20 21v-2a4 4 0 0 0-3-3.87" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                          <path d="M4 21v-2a4 4 0 0 1 3-3.87" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                          <circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                        </svg>
+
+                        <span className="utility-username">{user?.signInDetails?.loginId || user?.username}</span>
+                      </button>
+
+
+                      {userMenuOpen && (
+                        <div className="dropdown-menu" role="menu" aria-label="User menu">
+                          <button type="button" className="menu-item" role="menuitem" onClick={() => { setUserMenuOpen(false); handleLogout(); }}>
+                            {/* logout icon */}
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                              <path d="M16 17l5-5-5-5"></path>
+                              <path d="M21 12H9"></path>
+                            </svg>
+                            <span>Logout</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
+              </div>
 
-              </FormField>
-            </Form>
+  
+              {/* Messages area (scrollable). 'messages-pane' wrapper asegura que el scroll se limite aquí. */}
+              <div className="messages-pane">
+                <div className="messages-container scrollable" role="log" aria-live="polite">
+                  {messages.length === 0 && (
+                    <div className="messages-empty">
+                      <div>There are no messages yet. Start the conversation by typing below.</div>
+                    </div>
+                  )}
+  
+                  {messages.map((message, index) => (
+                    <div key={index} className="message-row">
+                      <ChatBubble
+                        ariaLabel={`${message.sender} message`}
+                        type={message.sender === user.username ? "outgoing" : "incoming"}
+                        avatar={
+                          <Avatar
+                            ariaLabel={message.sender}
+                            tooltipText={message.sender === userIdForMessages ? userIdForMessages : message.sender}
+                            color={message.sender === userIdForMessages ? "default" : "gen-ai"}
+                            initials={
+                              // Para el usuario, mostrar iniciales de la parte local del email si existe
+                              message.sender === userIdForMessages
+                                ? (String(userIdForMessages || '').split('@')[0].substring(0,2) || '').toUpperCase()
+                                : String(message.sender || '').substring(0, 2).toUpperCase()
+                            }
+                          />
+                        }
+                      >
+                        <div className="message-content">
+                          {String(message.text || '').split('\n').map((line, i) => (
+                            <ReactMarkdown
+                              key={'md-rendering' + i}
+                              rehypePlugins={[rehypeRaw]}
+                            >
+                              {line}
+                            </ReactMarkdown>
+                          ))}
+                        </div>
+                      </ChatBubble>
+                    </div>
+                  ))}
+  
+                  <div ref={messagesEndRef} />
+                </div>
+  
+                {/* Agent-processing indicator (permanece debajo del scroll) */}
+                {isAgentResponding && (
+                  <div className="agent-indicator">
+                    <LiveRegion>
+                      <Box margin={{ bottom: "xs", left: "l" }} color="text-body-secondary">
+                        {!isStrandsAgent && tasksCompleted.count > 0 && (
+                          <div>
+                            {agentName.value} is working on your request | Tasks completed ({tasksCompleted.count})
+                            <br />
+                            <i>{tasksCompleted.latestRationale}</i>
+                          </div>
+                        )}
+                        {isStrandsAgent && (
+                          <div>{agentName.value} is processing your request...</div>
+                        )}
+                        <LoadingBar variant="gen-ai" />
+                      </Box>
+                    </LiveRegion>
+                  </div>
+                )}
+              </div>
+  
+              {/* Message input / footer */}
+              <form onSubmit={handleSubmit} className="message-form" aria-label="Formulario de mensaje">
+                <Form>
+                  <FormField stretch>
+                    <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                      <button
+                        type="button"
+                        onClick={isListening ? stopListening : startListening}
+                        title={isListening ? "Stop Listening" : "Start Listening"}
+                        className="mic-button"
+                        hidden={!speechRecognitionSupported}
+                        aria-pressed={isListening}
+                      >
+                        {isListening ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" height="28" width="28" fill="red" viewBox="0 0 24 24">
+                            <path d="M12 14q-1.25 0-2.125-.875T9 11V5q0-1.25.875-2.125T12 2q1.25 0 2.125.875T15 5v6q0 1.25-.875 2.125T12 14Zm-1 7v-3.1q-2.875-.35-4.437-2.35Q5 13.55 5 11h2q0 2.075 1.463 3.538Q9.925 16 12 16q2.075 0 3.538-1.462Q17 13.075 17 11h2q0 2.55-1.563 4.55-1.562 2-4.437 2.35V21Z" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" height="28" width="28" fill="black" viewBox="0 0 24 24">
+                            <path d="M12 14q-1.25 0-2.125-.875T9 11V5q0-1.25.875-2.125T12 2q1.25 0 2.125.875T15 5v6q0 1.25-.875 2.125T12 14Zm-1 7v-3.1q-2.875-.35-4.437-2.35Q5 13.55 5 11h2q0 2.075 1.463 3.538Q9.925 16 12 16q2.075 0 3.538-1.462Q17 13.075 17 11h2q0 2.55-1.563 4.55-1.562 2-4.437 2.35V21Z" />
+                          </svg>
+                        )}
+                      </button>
+  
+                      <div style={{ flex: 1 }}>
+                        <PromptInput
+                          type='text'
+                          value={newMessage}
+                          onChange={({ detail }) => setNewMessage(detail.value)}
+                          placeholder='Type your question here...'
+                          actionButtonAriaLabel="Send message"
+                          actionButtonIconName="send"
+                        />
+                      </div>
+                    </div>
+                  </FormField>
+                </Form>
+              </form>
+  
 
-          </form>
+              <Modal
+                onDismiss={() => setShowNewChatModal(false)}
+                visible={showNewChatModal}
+                header="Create a new chat"
+                closeAriaLabel="Cerrar"
+                footer={
+                  <Box float="right">
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Button variant="link" onClick={() => setShowNewChatModal(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="primary"
+                        loading={loadingNewChat}
+                        onClick={handleConfirmCreate}
+                      >
+                        Create chat
+                      </Button>
+                    </SpaceBetween>
+                  </Box>
+                }
+              >
+                <FormField
+                  label="New chat's name"
+                  description="This name will be used to identify your chat in the database."
+                >
+                  <Input
+                    placeholder="Write a new name..."
+                    value={chatName}
+                    onChange={(e) => setChatName(e.detail.value)}
+                  />
+                </FormField>
+              </Modal>
+  
+              <Modal
+                onDismiss={() => setShowClearDataModal(false)}
+                visible={showClearDataModal}
+                header="Confirm clearing data"
+                footer={
+                  <Box float="right">
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Button variant="link" onClick={() => setShowClearDataModal(false)}>Cancel</Button>
+                      <Button variant="primary" onClick={confirmClearData}>Ok</Button>
+                    </SpaceBetween>
+                  </Box>
+                }
+              >
+                <strong>This action cannot be undone.</strong> Configuration for this application will be deleted along with the chat history with {agentName.value}. Do you want to continue?
+              </Modal>
 
-          {/* 🟢 Modal para crear nuevo chat */}
-          <Modal
-            onDismiss={() => setShowNewChatModal(false)}
-            visible={showNewChatModal}
-            header="Create a new chat"
-            closeAriaLabel="Cerrar"
-            footer={
-              <Box float="right">
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Button variant="link" onClick={() => setShowNewChatModal(false)}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    variant="primary"
-                    loading={loadingNewChat}
-                    onClick={handleConfirmCreate}
-                  >
-                    Crear chat
-                  </Button>
-                </SpaceBetween>
-              </Box>
-            }
-          >
-            <FormField
-              label="New chat's name"
-              description="This name will be used to identify your chat in the database."
-            >
-              <Input
-                placeholder="Write a new name..."
-                value={chatName}
-                onChange={(e) => setChatName(e.detail.value)}
-              />
-            </FormField>
-          </Modal>
 
-          {/* Clear Data Confirmation Modal */}
+              {/* Modal para editar nombre de chat */}
+              <Modal
+                onDismiss={() => setEditModalOpen(false)}
+                visible={editModalOpen}
+                header="Edit chat name"
+                closeAriaLabel="Close"
+                footer={
+                  <Box float="right">
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Button variant="link" onClick={() => setEditModalOpen(false)}>Cancel</Button>
+                      <Button variant="primary" onClick={confirmEditChat}>Save</Button>
+                    </SpaceBetween>
+                  </Box>
+                }
+              >
+                <FormField label="Chat name" description="Write the new name.">
+                  <Input
+                    placeholder="Chat name..."
+                    value={editChatName}
+                    onChange={(e) => setEditChatName(e.detail.value)}
+                    aria-label="Chat name"
+                  />
+                </FormField>
+              </Modal>
 
-          <Modal
-            onDismiss={() => setShowClearDataModal(false)}
-            visible={showClearDataModal}
-            header="Confirm clearing data"
-            footer={
-              <Box float="right">
-                <SpaceBetween direction="horizontal" size="xs">
-                  <Button variant="link" onClick={() => setShowClearDataModal(false)}>Cancel</Button>
-                  <Button variant="primary" onClick={confirmClearData}>Ok</Button>
-                </SpaceBetween>
-              </Box>
-            }
-          >
-            <strong>This action cannot be undone.</strong> Configuration for this application will be deleted along with the chat history with {agentName.value}. Do you want to continue?
-          </Modal>
+
+              {/* Modal de confirmación para eliminar chat */}
+              <Modal
+                onDismiss={cancelDeleteChat}
+                visible={showDeleteChatModal}
+                header="Confirmar eliminación"
+                closeAriaLabel="Cerrar"
+                footer={
+                  <Box float="right">
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Button variant="link" onClick={cancelDeleteChat} disabled={Boolean(deletingChatId)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="primary"
+                        loading={Boolean(deletingChatId)}
+                        onClick={confirmDeleteChat}
+                      >
+                        Delete
+                      </Button>
+                    </SpaceBetween>
+                  </Box>
+                }
+              >
+                <div style={{ minWidth: 320 }}>
+                  <p>
+                    Are you sure you want to delete the chat?
+                    {chatToDelete?.chatName ? ` «${chatToDelete.chatName}»` : ''}?
+                    This action will delete the chat and all related messages.
+                  </p>
+                  <p style={{ fontSize: '0.9rem', color: '#666' }}>
+                    This operation is irreversible.
+                  </p>
+                </div>
+              </Modal>
+
+            </main>
+          </div>
         </div>
-      </Container>
+      </div>
+    );
+  })()
 
-    </div>
-    //   }
-    // >
-
-    // </ContentLayout>  
-  );
 };
 
 ChatComponent.propTypes = {

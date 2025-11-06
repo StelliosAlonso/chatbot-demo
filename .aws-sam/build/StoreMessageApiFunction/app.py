@@ -1,7 +1,7 @@
 import os
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 # Inicializa DynamoDB
@@ -44,7 +44,7 @@ def lambda_handler(event, context):
 
         # Generar ID único y timestamp
         msg_id = uuid.uuid4().hex[:8]
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
 
         # Guardar mensaje en DynamoDB
         table.put_item(Item={
