@@ -30,3 +30,6 @@ amplifyconfiguration*
 
 #node packages locked dependencies
 package-lock.json
+
+# env
+.env
