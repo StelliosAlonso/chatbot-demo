@@ -466,6 +466,9 @@ Resources:
           Fn::GetAtt:
           - BedrockAgent
           - AgentId
+      - Name: VITE_SEARCH_API_URL
+        Value:
+          Fn::Sub: https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
       BuildSpec: "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n\
         \        - if [ -f package-lock.json ]; then npm ci; else npm install; fi\n\
         \    build:\n      commands:\n        - npm run build\n  artifacts:\n    baseDirectory:\
