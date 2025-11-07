@@ -427,6 +427,8 @@ Resources:
           Value: !Ref AWS::Region
         - Name: VITE_BEDROCK_AGENT_ID
           Value: !GetAtt BedrockAgent.AgentId
+        - Name: VITE_SEARCH_API_URL
+          Value: !Sub "https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
       # BuildSpec para proyectos con Vite -> produce 'dist' por defecto
       BuildSpec: |
         version: 1

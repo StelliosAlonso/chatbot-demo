@@ -883,7 +883,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
 
     // Helper interno: envia mensaje al API Gateway del agente (hardcode endpoint)
     const sendToAgentEndpoint = async ({ sessionId, message }) => {
-      const endpoint = 'https://z2a5hwfq92.execute-api.us-east-1.amazonaws.com/production/chat';
+      const endpoint = 'https://fsrf981nu0.execute-api.us-east-1.amazonaws.com/production/chat';
       const headers = { 'Content-Type': 'application/json' };
 
       // Intento de extraer un idToken de Cognito/Amplify para Authorization Bearer (opcional)
@@ -1704,8 +1704,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
               <Modal
                 onDismiss={cancelDeleteChat}
                 visible={showDeleteChatModal}
-                header="Confirmar eliminación"
-                closeAriaLabel="Cerrar"
+                header="Confirm deletion"
+                closeAriaLabel="Close"
                 footer={
                   <Box float="right">
                     <SpaceBetween direction="horizontal" size="xs">
