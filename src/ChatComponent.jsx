@@ -1316,6 +1316,57 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   }, []);
 
 
+
+  // agregar hooks en la parte superior del componente
+  const searchTimeoutRef = React.useRef(null);
+
+  const handleSearchInput = (e) => {
+    const q = e.target.value;
+    // debounce 350ms
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => {
+      performSearch(q);
+    }, 350);
+  };
+
+  const performSearch = async (q) => {
+    // si vacío, puedes recargar lista local completa o limpiar resultados
+    if (!q || String(q).trim().length === 0) {
+      // recargar chats originales (puedes mantener originalChats state)
+      // setChats(originalChats);
+      setChats(prev => prev.map(c => ({ ...c, _visible: true })));
+      return;
+    }
+
+    setLoadingChats(true);
+    try {
+      const base = import.meta.env.VITE_SEARCH_API_URL || ''; // definido por Amplify env var
+      const resp = await fetch(`${base}/search?q=${encodeURIComponent(q)}`, {
+        method: 'GET',
+        credentials: 'include' // si usas cookies/Cognito; ajusta según auth
+      });
+      if (!resp.ok) throw new Error('search failed');
+      const json = await resp.json();
+      const results = json.results || [];
+      // mapear a tu shape de chats
+      const mapped = results.map(r => ({
+        chatId: r.chatId,
+        chatName: r.chatName,
+        lastMessageSnippet: r.snippet,
+        createdAt: r.lastMessageAt,
+        _visible: true
+      }));
+      setChats(mapped);
+    } catch (err) {
+      console.error('Search error', err);
+    } finally {
+      setLoadingChats(false);
+    }
+  };
+
+
+
+
   return (() => {
     // calcular índice de la última respuesta enviada por el agente (sender distinto a user.username)
     const lastAgentIndex = messages.reduce((acc, m, i) => (m.sender !== user.username ? i : acc), -1);
@@ -1344,10 +1395,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                     type="search"
                     className="chat-search"
                     placeholder="Search chats..."
-                    onChange={(e) => {
-                      const q = e.target.value.toLowerCase();
-                      setChats(prev => prev.map(c => ({ ...c, _visible: String(c.chatName || '').toLowerCase().includes(q) })));
-                    }}
+                    onChange={handleSearchInput}
                     aria-label="Search chats"
                   />
                 </div>

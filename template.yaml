@@ -204,6 +204,8 @@ Resources:
         - AttributeName: SK
           KeyType: RANGE
       BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
 
   # --------------------------------------- [API CREACION DE NUEVOS CHATS] ---------------------------------------
   ChatApi:
@@ -427,6 +429,9 @@ Resources:
           Value: !Ref AWS::Region
         - Name: VITE_BEDROCK_AGENT_ID
           Value: !GetAtt BedrockAgent.AgentId
+        - Name: VITE_SEARCH_API_URL
+          Value: !Sub "https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+
       # BuildSpec para proyectos con Vite -> produce 'dist' por defecto
       BuildSpec: |
         version: 1
@@ -456,6 +461,173 @@ Resources:
       EnablePerformanceMode: false
       Stage: PRODUCTION
     DependsOn: AmplifyApp
+
+
+
+# ----------------- ZERO-ETL / OpenSearch Ingestion resources -----------------
+
+# ---------- OpenSearch Serverless collection + required encryption policy ----------
+  OpenSearchEncryptionPolicy:
+    Type: AWS::OpenSearchServerless::SecurityPolicy
+    Properties:
+      Name: !Sub "${EnvironmentName}-chat-encryption-policy"
+      Type: encryption
+      Description: "Encryption policy for chat collection"
+      Policy: !Sub |
+        {"Rules":[{"ResourceType":"collection","Resource":["collection/${EnvironmentName}-chat-collection"]}],"AWSOwnedKey":true}
+
+
+  OpenSearchCollection:
+    Type: AWS::OpenSearchServerless::Collection
+    Properties:
+      Name: !Sub "${EnvironmentName}-chat-collection"   # usa Name (3-32 chars, lowercase, a-z0-9-)
+      Type: SEARCH
+      Description: "Serverless collection for chatbot (search)"
+    DependsOn:
+      - OpenSearchEncryptionPolicy
+
+
+
+# ---------- IAM role para OSIS pipeline (lee DDB stream, escribe en AOSS) ----------
+  OpenSearchIngestionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-osis-pipeline-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - osis.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: AllowDDBReadAndAossWrite
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                  - dynamodb:DescribeTable
+                Resource:
+                  - !GetAtt PetsChatbotTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - aoss:BatchPutDocument
+                  - aoss:CreateIndex
+                  - aoss:APIAccessAll
+                Resource:
+                  - !GetAtt OpenSearchCollection.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+
+
+# ---------- OSIS pipeline (nombre corto y LogPublishingOptions en la forma correcta) ----------
+  OpenSearchIngestionPipeline:
+    Type: AWS::OSIS::Pipeline
+    Properties:
+      PipelineName: !Sub "${EnvironmentName}-osis-p"   # <= 28 chars
+      PipelineConfigurationBody: !Sub |
+        source:
+          dynamodb:
+            table_name: ${PetsChatbotTable}
+            stream_view_type: NEW_AND_OLD_IMAGES
+            include_snapshot: false
+        processors: {}
+        sink:
+          opensearch:
+            collection: ${OpenSearchCollection}
+      MinUnits: 1
+      MaxUnits: 1
+      PipelineRoleArn: !GetAtt OpenSearchIngestionRole.Arn
+      LogPublishingOptions:
+        IsLoggingEnabled: true
+        CloudWatchLogDestination:
+          LogGroup: !Sub "/aws/vendedlogs/${AWS::StackName}/osis-pipeline"
+    DependsOn:
+      - OpenSearchIngestionRole
+      - OpenSearchCollection
+      - PetsChatbotTable
+
+
+
+
+# ---------------- Search Lambda + API (proxy a OpenSearch) ----------------
+
+  # IAM role para la Lambda de búsqueda (SearchApiFunction)
+  SearchApiFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-search-api-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: SearchApiBasicPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Permisos para que la Lambda escriba logs en CloudWatch
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+
+              # Permisos para llamar a OpenSearch Serverless (ajusta en prod a ARN del collection)
+              - Effect: Allow
+                Action:
+                  - "aoss:APIAccessAll"
+                  - "aoss:Search"
+                Resource: "*"
+
+
+  # Lambda SearchApiFunction (referencia el role creado arriba)
+  SearchApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-search-api"
+      Description: "API para buscar chats (proxy seguro a OpenSearch Serverless collection)"
+      CodeUri: backend/search-api/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 256
+      Role: !GetAtt SearchApiFunctionRole.Arn
+      Environment:
+        Variables:
+          OPENSEARCH_ENDPOINT: !GetAtt OpenSearchCollection.CollectionEndpoint
+          OPENSEARCH_INDEX: "chats"
+          # NO establecer AWS_REGION -> Lambda lo inyecta automáticamente
+          # Si necesitas la región en otra variable no reservada:
+          # OPENSEARCH_REGION: !Ref AWS::Region
+      Events:
+        ApiSearch:
+          Type: Api
+          Properties:
+            Path: /search
+            Method: get
+            RestApiId: !Ref ChatApi
+
+
 
 
 
@@ -506,3 +678,35 @@ Outputs:
             AppId: !GetAtt AmplifyApp.AppId,
             BranchName: !Ref AmplifyBranchName
           }
+
+
+  OpenSearchCollectionName:
+    Description: "OpenSearch Serverless collection name"
+    Value: !Ref OpenSearchCollection
+    Export:
+      Name: !Sub "${AWS::StackName}:OpenSearchCollectionName"
+
+  OpenSearchIngestionPipelineArn:
+    Description: "OSIS pipeline ARN"
+    Value: !GetAtt OpenSearchIngestionPipeline.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}:OSISPipelineArn"
+
+  DynamoDBStreamArn:
+    Description: "DynamoDB Stream ARN (usar para debug/políticas)"
+    Value: !GetAtt PetsChatbotTable.StreamArn
+    Export:
+      Name: !Sub "${AWS::StackName}:DDBStreamArn"
+
+
+  SearchApiUrl:
+    Description: "Endpoint público del API para búsquedas (stage Prod)"
+    Value: !Sub "https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/search"
+    Export:
+      Name: !Sub "${AWS::StackName}:SearchApiUrl"
+
+  OpenSearchCollectionEndpoint:
+    Description: "OpenSearch Serverless collection endpoint"
+    Value: !GetAtt OpenSearchCollection.CollectionEndpoint
+    Export:
+      Name: !Sub "${AWS::StackName}:OpenSearchCollectionEndpoint"
