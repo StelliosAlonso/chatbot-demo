@@ -41,6 +41,8 @@ import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from "@aws-sdk/clie
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import './ChatComponent.css';
 
+
+
 /**
  * Main chat interface component that handles message interaction with Bedrock agent
  * @param {Object} props - Component properties
@@ -874,181 +876,397 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
    * @param {Event} e - Form submission event
    */
   const handleSubmit = async (e) => {
-
     e.preventDefault();
     if (!newMessage.trim() || !sessionId) return;
-
-    // Lee appConfig si lo necesitas para otras cosas (no obligatorio aquí)
+  
+    // lee appConfig una sola vez aquí
     const appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
-
-    // Helper interno: envia mensaje al API Gateway del agente (hardcode endpoint)
-    const sendToAgentEndpoint = async ({ sessionId, message }) => {
-      const endpoint = 'https://fsrf981nu0.execute-api.us-east-1.amazonaws.com/production/chat';
-      const headers = { 'Content-Type': 'application/json' };
-
-      // Intento de extraer un idToken de Cognito/Amplify para Authorization Bearer (opcional)
-      try {
-        const AuthModule = await ensureAuthModule().catch(() => null);
-        if (AuthModule) {
-          let token = null;
-          try {
-            // distintos formatos según la versión de Amplify
-            if (typeof AuthModule.currentSession === 'function') {
-              // Amplify vX possible shape
-              const sess = await AuthModule.currentSession();
-              token = (sess?.getIdToken && typeof sess.getIdToken === 'function' && sess.getIdToken().getJwtToken && sess.getIdToken().getJwtToken())
-                || sess?.idToken?.jwtToken
-                || (sess?.tokens && sess.tokens.idToken);
-            } else if (typeof AuthModule.fetchAuthSession === 'function') {
-              // Otra posible API
-              const f = await AuthModule.fetchAuthSession();
-              token = f?.tokens?.idToken || f?.idToken?.jwtToken || f?.idToken;
-            } else if (AuthModule?.currentAuthenticatedUser) {
-              // Fallback: obtener sesión desde currentAuthenticatedUser (menos habitual)
-              try {
-                const cu = await AuthModule.currentAuthenticatedUser();
-                // some flows attach signInUserSession
-                token = cu?.signInUserSession?.idToken?.jwtToken || cu?.idToken?.jwtToken;
-              } catch (e) {
-                // ignore
-              }
-            }
-          } catch (err) {
-            console.debug('No se pudo extraer idToken del AuthModule:', err);
-          }
-
-          if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-            console.debug('sendToAgentEndpoint: Authorization header added (masked).');
-          }
-        }
-      } catch (err) {
-        console.debug('sendToAgentEndpoint: ensureAuthModule falló (no Authorization).', err);
-      }
-
-      // Construir body que espera el endpoint
-      const body = {
-        sessionId,
-        message,
-        user: user?.username || 'anonymous'
-      };
-
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      });
-
-      if (!resp.ok) {
-        // intentar leer cuerpo para diagnóstico
-        const txt = await resp.text().catch(() => '');
-        throw new Error(`Agent API error ${resp.status}: ${txt}`);
-      }
-
-      // parseo seguro de JSON
-      let data = null;
-      try {
-        data = await resp.json();
-      } catch (err) {
-        console.warn('sendToAgentEndpoint: respuesta no es JSON, devolviendo texto crudo.', err);
-        const txt = await resp.text().catch(() => '');
-        return txt || '';
-      }
-
-      // Soportar varias formas de respuesta comunes
-      const reply = data?.reply || data?.response || data?.text || data?.message || (typeof data === 'string' ? data : JSON.stringify(data));
-      return reply;
-    };
-
-    // Helper para maskear secretos en logs si lo necesitas
+  
+    // Helper para mostrar credenciales de forma segura (mask)
     const mask = (s = '') => {
       if (!s) return '(empty)';
       const str = String(s);
       if (str.length <= 8) return `${str.slice(0, 2)}...${str.slice(-2)}`;
       return `${str.slice(0, 4)}...${str.slice(-4)}`;
     };
-
-    // Clear input field (UX)
-    const originalMessage = newMessage;
+  
+    // Clear input field
     setNewMessage('');
-
-    // obtener id consistente del usuario (preferimos el email que guardamos en userIdForMessages)
-    let senderId = userIdForMessages;
-    if (!senderId) {
-      try { senderId = await getUserEmail() || user?.username; } catch (e) { senderId = user?.username; }
-    }
-
-    // userMessage ahora usa el mismo senderId que guardaremos en backend
-    const userMessage = { text: originalMessage, sender: senderId || user?.username };
-    setMessages(prev => [...prev, userMessage]);
+  
+    const userMessage = { text: newMessage, sender: user.username };
+    setMessages(prevMessages => [...prevMessages, userMessage]);
     setIsAgentResponding(true);
-
+  
     try {
-      // Invocar endpoint del agente
-      console.groupCollapsed('handleSubmit -> invoking external agent endpoint');
-      console.log('sessionId:', sessionId);
-      console.log('user:', user?.username);
-      console.log('message preview:', originalMessage.slice(0, 200));
-
-      const replyText = await sendToAgentEndpoint({ sessionId, message: originalMessage });
-
-      console.log('agent reply (preview):', (typeof replyText === 'string' ? replyText.slice(0, 500) : JSON.stringify(replyText).slice(0, 500)));
-
-      const agentMessage = { text: replyText, sender: agentName.value || 'Agent' };
-
-      // 🟢 Obtener y mostrar el email del usuario autenticado
-      let email;
-      let AuthModule;
-
-      try {
-        AuthModule = await ensureAuthModule();
-        console.log('AuthModule resolved:', AuthModule);
-        console.log('AuthModule keys:', Object.keys(AuthModule || {}));
-      } catch (authErr) {
-        console.error('No se pudo resolver el módulo Auth:', authErr);
-        return; // abortar si no hay Auth disponible
-      }
-      
-      try {
-        const { getCurrentUser } = AuthModule;
-        if (getCurrentUser) {
-          const user = await getCurrentUser();
-          email = user?.signInDetails?.loginId || user?.username || "desconocido";
-        } else {
-          console.warn("getCurrentUser no está disponible en AuthModule.");
+      let agentMessage = null;
+  
+      // --- BEDROCK (intento principal si corresponde) ---
+      if (!isStrandsAgent && bedrockClient) {
+        const bedrockConfig = (appConfig && appConfig.bedrock) || {};
+        console.groupCollapsed('handleSubmit: Bedrock invocation debug');
+        console.log('appConfig (loaded):', appConfig);
+        console.log('bedrockConfig from appConfig:', bedrockConfig);
+        console.log('bedrockClient present?', Boolean(bedrockClient));
+        console.log('sessionId:', sessionId);
+        console.log('newMessage (first 200 chars):', newMessage.slice(0, 200));
+  
+        const configAgentId = bedrockConfig.agentId ? String(bedrockConfig.agentId).trim() : undefined;
+        const configAliasId = bedrockConfig.agentAliasId ? String(bedrockConfig.agentAliasId).trim() : undefined;
+        const configRegion = bedrockConfig.region ? String(bedrockConfig.region).trim() : undefined;
+  
+        console.log('configAgentId:', configAgentId);
+        console.log('configAliasId:', configAliasId);
+        console.log('configRegion:', configRegion);
+  
+        // Obtener credenciales solo para logging / potencial uso (no enviamos secretos en body)
+        const AuthModule = await ensureAuthModule();
+        let awsCreds;
+        try {
+          awsCreds = await getAwsCredentials(AuthModule, appConfig);
+        } catch (credErr) {
+          console.error('getAwsCredentials falló:', credErr);
+          console.groupEnd();
+          // saltar al fallback externo
+          throw { __skipToFallback: true, reason: 'getAwsCredentials failed', detail: credErr };
         }
-      } catch (emailErr) {
-        console.error("❌ Error obteniendo email del usuario:", emailErr);
+  
+        console.log('AWS credentials (masked):', {
+          accessKeyId: mask(awsCreds?.accessKeyId),
+          secretAccessKey: mask(awsCreds?.secretAccessKey),
+          sessionToken: mask(awsCreds?.sessionToken)
+        });
+  
+        // Construir parámetros base (NO incluir credenciales en el body)
+        const baseParams = {
+          agentId: configAgentId,
+          sessionId: sessionId,
+          endSession: false,
+          enableTrace: true,
+          inputText: newMessage
+        };
+  
+        console.log('InvokeAgent baseParams (sanitized):', {
+          agentId: baseParams.agentId,
+          hasSessionId: Boolean(baseParams.sessionId),
+          endSession: baseParams.endSession,
+          enableTrace: baseParams.enableTrace,
+          inputTextPreview: baseParams.inputText.slice(0, 200)
+        });
+  
+        const aliasId = configAliasId && configAliasId !== '' ? configAliasId : undefined;
+        if (aliasId) {
+          console.log('Will attempt invoke using aliasId:', aliasId);
+        } else {
+          console.log('No aliasId provided, will invoke using only agentId.');
+        }
+  
+        // Helper para procesar completion (streaming)
+        const processCompletion = async (response) => {
+          if (response.completion === undefined) throw new Error("Completion is undefined");
+          let text = "";
+          for await (const chunkEvent of response.completion) {
+            try { console.debug('chunkEvent (raw):', chunkEvent); } catch (logErr) { console.debug('Error logging chunkEvent', logErr); }
+  
+            if (chunkEvent.trace) {
+              tasksCompleted.count++;
+              if (chunkEvent.trace.trace?.failureTrace) {
+                console.error('FailureTrace detected; reason:', chunkEvent.trace.trace.failureTrace.failureReason);
+                throw new Error(chunkEvent.trace.trace.failureTrace.failureReason);
+              }
+              if (chunkEvent.trace.trace?.orchestrationTrace?.rationale) {
+                tasksCompleted.latestRationale = chunkEvent.trace.trace.orchestrationTrace.rationale.text;
+                scrollToBottom();
+              }
+              setTasksCompleted({ ...tasksCompleted });
+            } else if (chunkEvent.chunk) {
+              text += new TextDecoder("utf-8").decode(chunkEvent.chunk.bytes);
+            }
+          }
+          return text;
+        };
+  
+        // Intento de invoke: si hay alias, lo incluimos; si no, solo agentId.
+        let response;
+        try {
+          if (aliasId) {
+            const paramsWithAlias = { ...baseParams, agentAliasId: aliasId };
+            console.log('Sending InvokeAgentCommand with params (alias):', { agentId: paramsWithAlias.agentId, agentAliasId: paramsWithAlias.agentAliasId, sessionId: paramsWithAlias.sessionId });
+            const command = new InvokeAgentCommand(paramsWithAlias);
+            response = await bedrockClient.send(command);
+          } else {
+            console.log('Sending InvokeAgentCommand with params (no alias):', { agentId: baseParams.agentId, sessionId: baseParams.sessionId });
+            const command = new InvokeAgentCommand(baseParams);
+            response = await bedrockClient.send(command);
+          }
+  
+          console.log('InvokeAgent response metadata:', {
+            $metadata: response?.$metadata ? { httpStatusCode: response.$metadata.httpStatusCode, requestId: response.$metadata.requestId } : undefined
+          });
+  
+          const completionText = await processCompletion(response);
+          console.log('completionText (preview):', completionText.slice(0, 500));
+          agentMessage = { text: completionText, sender: agentName.value };
+          console.groupEnd();
+        } catch (err) {
+          if (err && err.__skipToFallback) {
+            console.warn('Skipping Bedrock invoke and going to fallback:', err.reason);
+            throw err; // lo manejará el catch superior para fallback
+          }
+  
+          console.error('InvokeAgent error (caught)', { name: err?.name, message: err?.message, $metadata: err?.$metadata });
+  
+          const shouldFallback =
+            (err && (err.name === 'ResourceNotFoundException' || err.name === 'ValidationException')) ||
+            (err && typeof err.message === 'string' && err.message.includes('agentAliasId')) ||
+            (err && typeof err.message === 'string' && err.message.toLowerCase().includes('model identifier is invalid'));
+  
+          if (shouldFallback) {
+            console.warn('Bedrock invoke not usable (will fallback to external API). Reason:', err?.message || err);
+            throw { __fallbackToApi: true, detail: err };
+          } else {
+            throw err;
+          }
+        }
+      } // end bedrock attempt
+  
+      // --- STRANDS (lambda) ---
+      if (!agentMessage && isStrandsAgent && lambdaClient) {
+        const strandsConfig = (appConfig && appConfig.strands) || {};
+        console.groupCollapsed('handleSubmit: Strands (Lambda) debug');
+        console.log('strandsConfig:', strandsConfig);
+        const payload = { query: newMessage };
+        const lambdaArn = strandsConfig.lambdaArn;
+        try {
+          console.log('Invoking Lambda ARN:', lambdaArn);
+          const command = new InvokeCommand({
+            FunctionName: lambdaArn,
+            Payload: JSON.stringify(payload),
+            InvocationType: 'RequestResponse'
+          });
+  
+          const response = await lambdaClient.send(command);
+          const responseBody = new TextDecoder().decode(response.Payload || response.body || '');
+          console.log('Lambda raw response (preview):', (responseBody || '').slice(0, 1000));
+          const parsedResponse = JSON.parse(responseBody || '{}');
+  
+          let responseText;
+          if (parsedResponse.body) {
+            responseText = JSON.parse(parsedResponse.body).response || JSON.parse(parsedResponse.body).message || null;
+          } else if (parsedResponse.response) {
+            responseText = parsedResponse.response;
+          } else if (parsedResponse.message) {
+            responseText = parsedResponse.message;
+          } else {
+            responseText = "Sorry, I couldn't process your request.";
+          }
+  
+          agentMessage = { text: responseText, sender: agentName.value };
+        } catch (err) {
+          console.error('Strands Lambda invocation failed, will fallthrough to fallback API if available:', err);
+          throw { __fallbackToApi: true, detail: err };
+        } finally {
+          console.groupEnd();
+        }
       }
-
-      // Guardar mensaje del usuario (usa senderId consistente)
-      await storeMessage({ chatId: sessionId, message: originalMessage, sender: senderId });
-
-      // Guardar la respuesta del agente conservando el agentName
-      await storeMessage({ chatId: sessionId, message: replyText, sender: agentName.value || "Agent" });
-
-      // Append agent message and persist both user+agent messages
-      setMessages(prev => [...prev, agentMessage]);
+  
+      // --- AGENTCORE ---
+      if (!agentMessage && isAgentCoreAgent && agentCoreClient) {
+        console.groupCollapsed('handleSubmit: AgentCore debug');
+        const agentCoreConfig = (appConfig && appConfig.agentcore) || {};
+        console.log('agentCoreConfig:', agentCoreConfig);
+        const command = new InvokeAgentRuntimeCommand({
+          agentRuntimeArn: agentCoreConfig.agentArn,
+          runtimeSessionId: sessionId,
+          payload: JSON.stringify({ prompt: newMessage })
+        });
+  
+        const response = await agentCoreClient.send(command);
+        console.log('AgentCore raw response metadata:', response?.$metadata);
+        let responseBody = '';
+        if (response.response && response.response.getReader) {
+          const reader = response.response.getReader();
+          const decoder = new TextDecoder();
+          let done = false;
+          while (!done) {
+            const { value, done: streamDone } = await reader.read();
+            done = streamDone;
+            if (value) responseBody += decoder.decode(value, { stream: true });
+          }
+        } else {
+          responseBody = response.response || '';
+        }
+  
+        console.log('AgentCore response preview:', responseBody.slice(0, 1000));
+        const parsed = JSON.parse(responseBody || '{}');
+        const responseText = parsed.result || parsed.message || "Sorry, I couldn't process your request.";
+        agentMessage = { text: responseText, sender: agentName.value };
+        console.groupEnd();
+      }
+  
+      // --- Si aún no hay agentMessage: intentar fallback al endpoint externo ---
+      if (!agentMessage) {
+        console.log('No agent message yet — attempting fallback to external chat API endpoint.');
+        const fallbackUrl = 'https://fsrf981nu0.execute-api.us-east-1.amazonaws.com/production/chat';
+  
+        // SEND a payload with multiple possible keys so the endpoint picks the one it expects
+        const fallbackPayloadSynonyms = {
+          sessionId,
+          user: { username: user?.username, userId: user?.userId },
+          // multiple synonyms for the text to maximize compatibility
+          prompt: newMessage,
+          query: newMessage,
+          message: newMessage,
+          input: newMessage,
+          text: newMessage
+        };
+  
+        try {
+          console.groupCollapsed('Fallback: external API invoke (multi-key payload)');
+          console.log('POST ->', fallbackUrl, 'payload preview:', { sessionId: sessionId, promptPreview: newMessage.slice(0, 200) });
+  
+          const resp = await fetch(fallbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fallbackPayloadSynonyms)
+          });
+  
+          const text = await resp.text();
+          let parsed;
+          try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+  
+          console.log('Fallback API raw response (preview):', (text || '').slice(0, 400));
+  
+          // If the endpoint explicitly complains "No message provided", reintentar con { query }
+          const lowText = (text || '').toString().toLowerCase();
+          if (lowText.includes('no message provided') || (parsed && parsed.error && String(parsed.error).toLowerCase().includes('no message'))) {
+            console.warn('Fallback API responded "No message provided" — reintentar con { query } payload.');
+            // reintento con la forma que tu Lambda usó antes
+            const retryPayload = { query: newMessage, sessionId, user: { username: user?.username } };
+            const resp2 = await fetch(fallbackUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(retryPayload)
+            });
+            const text2 = await resp2.text();
+            let parsed2;
+            try { parsed2 = JSON.parse(text2); } catch (e) { parsed2 = null; }
+            console.log('Fallback API retry raw response (preview):', (text2 || '').slice(0, 400));
+            // extraer respuesta
+            let responseText = null;
+            if (parsed2) {
+              responseText = parsed2.body ? (typeof parsed2.body === 'string' ? (() => { try { return JSON.parse(parsed2.body).response || JSON.parse(parsed2.body).message; } catch(e){ return parsed2.body } })() : parsed2.body.response || parsed2.body.message) : parsed2.response || parsed2.message || parsed2.text;
+            } else {
+              responseText = text2 || null;
+            }
+            agentMessage = { text: responseText || "Fallback returned no usable text.", sender: agentName.value || 'external-agent' };
+            console.groupEnd();
+          } else {
+            // Extraer el texto de respuesta desde varias formas posibles (respuesta inicial)
+            let responseText = null;
+            if (parsed) {
+              if (parsed.body) {
+                try {
+                  const inner = typeof parsed.body === 'string' ? JSON.parse(parsed.body) : parsed.body;
+                  responseText = inner.response || inner.message || inner.text || null;
+                } catch (e) {
+                  responseText = parsed.body;
+                }
+              }
+              responseText = responseText || parsed.response || parsed.message || parsed.text || null;
+            } else {
+              responseText = text || null;
+            }
+  
+            if (!responseText) responseText = "Sorry, the fallback chat API didn't return a usable response.";
+            agentMessage = { text: responseText, sender: agentName.value || 'external-agent' };
+            console.groupEnd();
+          }
+        } catch (fallbackErr) {
+          console.error('Fallback external API failed:', fallbackErr);
+          const errMsg = `Fallback endpoint error: ${String(fallbackErr)}`;
+          agentMessage = { text: errMsg, sender: 'agent' };
+        }
+      }
+  
+      // Append agent message
+      setMessages(prevMessages => [...prevMessages, agentMessage]);
       storeMessages(sessionId, [userMessage, agentMessage]);
-
-      console.groupEnd();
+  
     } catch (err) {
-      console.error('Error invoking external agent endpoint:', {
+      // Logging extendido para depuración
+      console.error('Error invoking agent (final catch):', {
         name: err?.name,
-        message: err?.message,
-        stack: err?.stack
+        message: err?.message || err,
+        stack: err?.stack,
+        $metadata: err?.$metadata
       });
-
-      const errReason = "**" + String(err) + "**";
-      const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
-      setMessages(prev => [...prev, errorMessage]);
-      storeMessages(sessionId, [userMessage, errorMessage]);
+  
+      // Si el error indica que debemos usar fallback, lo consumimos y ejecutamos fetch al fallback aquí:
+      if (err && (err.__fallbackToApi || err.__skipToFallback)) {
+        try {
+          const fallbackUrl = 'https://fsrf981nu0.execute-api.us-east-1.amazonaws.com/production/chat';
+          // Same multi-key fallback payload
+          const fallbackPayloadSynonyms = {
+            sessionId,
+            user: { username: user?.username, userId: user?.userId },
+            prompt: newMessage,
+            query: newMessage,
+            message: newMessage,
+            input: newMessage,
+            text: newMessage
+          };
+          const resp = await fetch(fallbackUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(fallbackPayloadSynonyms)
+          });
+          const text = await resp.text();
+          let parsed;
+          try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+          // If it says no message, retry with { query }
+          if ((text || '').toLowerCase().includes('no message provided') || (parsed && parsed.error && String(parsed.error).toLowerCase().includes('no message'))) {
+            const resp2 = await fetch(fallbackUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: newMessage, sessionId, user: { username: user?.username } })
+            });
+            const text2 = await resp2.text();
+            let parsed2;
+            try { parsed2 = JSON.parse(text2); } catch (e) { parsed2 = null; }
+            const responseText = parsed2?.response || parsed2?.message || text2;
+            const fallbackAgentMessage = { text: responseText || 'Fallback returned empty response.', sender: agentName.value || 'external-agent' };
+            setMessages(prevMessages => [...prevMessages, fallbackAgentMessage]);
+            storeMessages(sessionId, [userMessage, fallbackAgentMessage]);
+          } else {
+            const responseText = parsed?.response || parsed?.message || text;
+            const fallbackAgentMessage = { text: responseText || 'Fallback returned empty response.', sender: agentName.value || 'external-agent' };
+            setMessages(prevMessages => [...prevMessages, fallbackAgentMessage]);
+            storeMessages(sessionId, [userMessage, fallbackAgentMessage]);
+          }
+        } catch (finalFallbackErr) {
+          console.error('Final fallback attempt failed:', finalFallbackErr);
+          const errReason = "**" + String(finalFallbackErr) + "**";
+          const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
+          setMessages(prevMessages => [...prevMessages, errorMessage]);
+          storeMessages(sessionId, [userMessage, errorMessage]);
+        }
+      } else {
+        const errReason = "**" + String(err) + "**";
+        const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
+        setMessages(prevMessages => [...prevMessages, errorMessage]);
+        storeMessages(sessionId, [userMessage, errorMessage]);
+      }
     } finally {
       setIsAgentResponding(false);
-      // reset any task-tracking UI state you used antes
       setTasksCompleted({ count: 0, latestRationale: '' });
     }
   };
+  
+  
+  
+  
+  
+
 
 
 
