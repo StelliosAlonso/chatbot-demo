@@ -499,7 +499,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                - osis.amazonaws.com
+                - osis-pipelines.amazonaws.com    # <-- usar este service principal
             Action: sts:AssumeRole
       Path: "/"
       Policies:
@@ -536,17 +536,36 @@ Resources:
   OpenSearchIngestionPipeline:
     Type: AWS::OSIS::Pipeline
     Properties:
-      PipelineName: !Sub "${EnvironmentName}-osis-p"   # <= 28 chars
-      PipelineConfigurationBody: !Sub |
-        source:
-          dynamodb:
-            table_name: ${PetsChatbotTable}
-            stream_view_type: NEW_AND_OLD_IMAGES
-            include_snapshot: false
-        processors: {}
-        sink:
-          opensearch:
-            collection: ${OpenSearchCollection}
+      PipelineName: !Sub "${EnvironmentName}-osis-p"
+      PipelineConfigurationBody:
+        Fn::Sub:
+          - |
+            version: "2"
+            default_pipeline:
+              source:
+                dynamodb:
+                  tables:
+                    - table_arn: ${PetsChatbotTableArn}
+                      stream:
+                        start_position: "LATEST"
+                        view_on_remove: NEW_IMAGE
+                  aws:
+                    region: ${AWS::Region}
+                    sts_role_arn: ${IngestionRoleArn}
+              processor: []
+              sink:
+                - opensearch:
+                    hosts:
+                      - ${OpenSearchCollectionEndpoint}
+                    index: "chats"
+                    aws_sts_role_arn: ${IngestionRoleArn}
+                    aws_region: ${AWS::Region}
+                    aws_sigv4: true
+          - {
+              PetsChatbotTableArn: !GetAtt PetsChatbotTable.Arn,
+              OpenSearchCollectionEndpoint: !GetAtt OpenSearchCollection.CollectionEndpoint,
+              IngestionRoleArn: !GetAtt OpenSearchIngestionRole.Arn
+            }
       MinUnits: 1
       MaxUnits: 1
       PipelineRoleArn: !GetAtt OpenSearchIngestionRole.Arn
@@ -558,6 +577,13 @@ Resources:
       - OpenSearchIngestionRole
       - OpenSearchCollection
       - PetsChatbotTable
+
+
+
+
+
+
+
 
 
 

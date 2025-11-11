@@ -523,7 +523,7 @@ Resources:
         - Effect: Allow
           Principal:
             Service:
-            - osis.amazonaws.com
+            - osis-pipelines.amazonaws.com
           Action: sts:AssumeRole
       Path: /
       Policies:
@@ -564,9 +564,27 @@ Resources:
       PipelineName:
         Fn::Sub: ${EnvironmentName}-osis-p
       PipelineConfigurationBody:
-        Fn::Sub: "source:\n  dynamodb:\n    table_name: ${PetsChatbotTable}\n    stream_view_type:\
-          \ NEW_AND_OLD_IMAGES\n    include_snapshot: false\nprocessors: {}\nsink:\n\
-          \  opensearch:\n    collection: ${OpenSearchCollection}\n"
+        Fn::Sub:
+        - "version: \"2\"\ndefault_pipeline:\n  source:\n    dynamodb:\n      tables:\n\
+          \        - table_arn: ${PetsChatbotTableArn}\n          stream:\n      \
+          \      start_position: \"LATEST\"\n            view_on_remove: NEW_IMAGE\n\
+          \      aws:\n        region: ${AWS::Region}\n        sts_role_arn: ${IngestionRoleArn}\n\
+          \  processor: []\n  sink:\n    - opensearch:\n        hosts:\n         \
+          \ - ${OpenSearchCollectionEndpoint}\n        index: \"chats\"\n        aws_sts_role_arn:\
+          \ ${IngestionRoleArn}\n        aws_region: ${AWS::Region}\n        aws_sigv4:\
+          \ true\n"
+        - PetsChatbotTableArn:
+            Fn::GetAtt:
+            - PetsChatbotTable
+            - Arn
+          OpenSearchCollectionEndpoint:
+            Fn::GetAtt:
+            - OpenSearchCollection
+            - CollectionEndpoint
+          IngestionRoleArn:
+            Fn::GetAtt:
+            - OpenSearchIngestionRole
+            - Arn
       MinUnits: 1
       MaxUnits: 1
       PipelineRoleArn:
