@@ -547,6 +547,7 @@ Resources:
             - aoss:BatchPutDocument
             - aoss:CreateIndex
             - aoss:APIAccessAll
+            - aoss:BatchGetCollection
             Resource:
             - Fn::GetAtt:
               - OpenSearchCollection
@@ -558,48 +559,47 @@ Resources:
             - logs:PutLogEvents
             Resource:
               Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
-  OpenSearchIngestionPipeline:
-    Type: AWS::OSIS::Pipeline
+          - Effect: Allow
+            Action:
+            - aoss:GetSecurityPolicy
+            - aoss:CreateSecurityPolicy
+            - aoss:UpdateSecurityPolicy
+            - aoss:DeleteSecurityPolicy
+            - aoss:ListSecurityPolicies
+            Resource: '*'
+  OpenSearchDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    DependsOn:
+    - OpenSearchCollection
+    - OpenSearchIngestionRole
+    - SearchApiFunctionRole
     Properties:
-      PipelineName:
-        Fn::Sub: ${EnvironmentName}-osis-p
-      PipelineConfigurationBody:
+      Name:
+        Fn::Sub: ${EnvironmentName}-data-access-policy
+      Type: data
+      Description: Allow ingestion and search roles access
+      Policy:
         Fn::Sub:
-        - "version: \"2\"\ndefault_pipeline:\n  source:\n    dynamodb:\n      tables:\n\
-          \        - table_arn: ${PetsChatbotTableArn}\n          stream:\n      \
-          \      start_position: \"LATEST\"\n            view_on_remove: NEW_IMAGE\n\
-          \      aws:\n        region: ${AWS::Region}\n        sts_role_arn: ${IngestionRoleArn}\n\
-          \  processor: []\n  sink:\n    - opensearch:\n        hosts:\n         \
-          \ - ${OpenSearchCollectionEndpoint}\n        index: \"chats\"\n        aws_sts_role_arn:\
-          \ ${IngestionRoleArn}\n        aws_region: ${AWS::Region}\n        aws_sigv4:\
-          \ true\n"
-        - PetsChatbotTableArn:
-            Fn::GetAtt:
-            - PetsChatbotTable
-            - Arn
-          OpenSearchCollectionEndpoint:
-            Fn::GetAtt:
-            - OpenSearchCollection
-            - CollectionEndpoint
-          IngestionRoleArn:
+        - "[\n  {\n    \"Description\": \"Allow ingestion and search roles access\"\
+          ,\n    \"Rules\": [\n      {\n        \"ResourceType\": \"collection\",\n\
+          \        \"Resource\": [\"collection/${CollectionName}\"],\n        \"Permission\"\
+          : [\"aoss:CreateCollectionItems\",\"aoss:DescribeCollectionItems\"]\n  \
+          \    },\n      {\n        \"ResourceType\": \"index\",\n        \"Resource\"\
+          : [\"index/${CollectionName}/${IndexName}\"],\n        \"Permission\": [\"\
+          aoss:ReadDocument\",\"aoss:WriteDocument\",\"aoss:CreateIndex\",\"aoss:DescribeIndex\"\
+          ]\n      }\n    ],\n    \"Principal\": [\n      \"${IngestRoleArn}\",\n\
+          \      \"${SearchRoleArn}\"\n    ]\n  }\n]\n"
+        - IngestRoleArn:
             Fn::GetAtt:
             - OpenSearchIngestionRole
             - Arn
-      MinUnits: 1
-      MaxUnits: 1
-      PipelineRoleArn:
-        Fn::GetAtt:
-        - OpenSearchIngestionRole
-        - Arn
-      LogPublishingOptions:
-        IsLoggingEnabled: true
-        CloudWatchLogDestination:
-          LogGroup:
-            Fn::Sub: /aws/vendedlogs/${AWS::StackName}/osis-pipeline
-    DependsOn:
-    - OpenSearchIngestionRole
-    - OpenSearchCollection
-    - PetsChatbotTable
+          SearchRoleArn:
+            Fn::GetAtt:
+            - SearchApiFunctionRole
+            - Arn
+          CollectionName:
+            Fn::Sub: ${EnvironmentName}-chat-collection
+          IndexName: chats
   SearchApiFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -629,7 +629,10 @@ Resources:
           - Effect: Allow
             Action:
             - aoss:APIAccessAll
+            - aoss:DashboardsAccessAll
             - aoss:Search
+            - aoss:ReadDocument
+            - aoss:DescribeIndex
             Resource: '*'
   SearchApiFunction:
     Type: AWS::Serverless::Function
@@ -727,15 +730,6 @@ Outputs:
     Export:
       Name:
         Fn::Sub: ${AWS::StackName}:OpenSearchCollectionName
-  OpenSearchIngestionPipelineArn:
-    Description: OSIS pipeline ARN
-    Value:
-      Fn::GetAtt:
-      - OpenSearchIngestionPipeline
-      - Arn
-    Export:
-      Name:
-        Fn::Sub: ${AWS::StackName}:OSISPipelineArn
   DynamoDBStreamArn:
     Description: "DynamoDB Stream ARN (usar para debug/pol\xEDticas)"
     Value:

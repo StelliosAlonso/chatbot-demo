@@ -9,7 +9,7 @@ from requests_aws4auth import AWS4Auth
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")  # ej: https://abcd1234.us-east-1.aoss.amazonaws.com
+OPENSEARCH_ENDPOINT = os.environ.get("OPENSEARCH_ENDPOINT")
 OPENSEARCH_INDEX = os.environ.get("OPENSEARCH_INDEX", "chats")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -19,6 +19,10 @@ def get_awsauth():
     return AWS4Auth(credentials.access_key, credentials.secret_key, REGION, "aoss", session_token=credentials.token)
 
 def lambda_handler(event, context):
+    sts = boto3.client("sts")
+    identity = sts.get_caller_identity()
+    logger.info(f"Caller identity: {identity}")
+    
     try:
         params = event.get("queryStringParameters") or {}
         q = params.get("q", "")

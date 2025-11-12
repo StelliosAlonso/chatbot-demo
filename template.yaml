@@ -499,7 +499,7 @@ Resources:
           - Effect: Allow
             Principal:
               Service:
-                - osis-pipelines.amazonaws.com    # <-- usar este service principal
+                - osis-pipelines.amazonaws.com
             Action: sts:AssumeRole
       Path: "/"
       Policies:
@@ -516,13 +516,16 @@ Resources:
                   - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt PetsChatbotTable.StreamArn
+
               - Effect: Allow
                 Action:
                   - aoss:BatchPutDocument
                   - aoss:CreateIndex
                   - aoss:APIAccessAll
+                  - aoss:BatchGetCollection
                 Resource:
                   - !GetAtt OpenSearchCollection.Arn
+
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -530,60 +533,57 @@ Resources:
                   - logs:PutLogEvents
                 Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
 
+              - Effect: Allow
+                Action:
+                  - aoss:GetSecurityPolicy
+                  - aoss:CreateSecurityPolicy
+                  - aoss:UpdateSecurityPolicy
+                  - aoss:DeleteSecurityPolicy
+                  - aoss:ListSecurityPolicies
+                Resource: "*"
 
 
-# ---------- OSIS pipeline (nombre corto y LogPublishingOptions en la forma correcta) ----------
-  OpenSearchIngestionPipeline:
-    Type: AWS::OSIS::Pipeline
+
+  OpenSearchDataAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    DependsOn:
+      - OpenSearchCollection
+      - OpenSearchIngestionRole
+      - SearchApiFunctionRole
     Properties:
-      PipelineName: !Sub "${EnvironmentName}-osis-p"
-      PipelineConfigurationBody:
+      Name: !Sub "${EnvironmentName}-data-access-policy"
+      Type: data
+      Description: "Allow ingestion and search roles access"
+      Policy:
         Fn::Sub:
           - |
-            version: "2"
-            default_pipeline:
-              source:
-                dynamodb:
-                  tables:
-                    - table_arn: ${PetsChatbotTableArn}
-                      stream:
-                        start_position: "LATEST"
-                        view_on_remove: NEW_IMAGE
-                  aws:
-                    region: ${AWS::Region}
-                    sts_role_arn: ${IngestionRoleArn}
-              processor: []
-              sink:
-                - opensearch:
-                    hosts:
-                      - ${OpenSearchCollectionEndpoint}
-                    index: "chats"
-                    aws_sts_role_arn: ${IngestionRoleArn}
-                    aws_region: ${AWS::Region}
-                    aws_sigv4: true
+            [
+              {
+                "Description": "Allow ingestion and search roles access",
+                "Rules": [
+                  {
+                    "ResourceType": "collection",
+                    "Resource": ["collection/${CollectionName}"],
+                    "Permission": ["aoss:CreateCollectionItems","aoss:DescribeCollectionItems"]
+                  },
+                  {
+                    "ResourceType": "index",
+                    "Resource": ["index/${CollectionName}/${IndexName}"],
+                    "Permission": ["aoss:ReadDocument","aoss:WriteDocument","aoss:CreateIndex","aoss:DescribeIndex"]
+                  }
+                ],
+                "Principal": [
+                  "${IngestRoleArn}",
+                  "${SearchRoleArn}"
+                ]
+              }
+            ]
           - {
-              PetsChatbotTableArn: !GetAtt PetsChatbotTable.Arn,
-              OpenSearchCollectionEndpoint: !GetAtt OpenSearchCollection.CollectionEndpoint,
-              IngestionRoleArn: !GetAtt OpenSearchIngestionRole.Arn
+              "IngestRoleArn": !GetAtt OpenSearchIngestionRole.Arn,
+              "SearchRoleArn": !GetAtt SearchApiFunctionRole.Arn,
+              "CollectionName": !Sub "${EnvironmentName}-chat-collection",
+              "IndexName": "chats"
             }
-      MinUnits: 1
-      MaxUnits: 1
-      PipelineRoleArn: !GetAtt OpenSearchIngestionRole.Arn
-      LogPublishingOptions:
-        IsLoggingEnabled: true
-        CloudWatchLogDestination:
-          LogGroup: !Sub "/aws/vendedlogs/${AWS::StackName}/osis-pipeline"
-    DependsOn:
-      - OpenSearchIngestionRole
-      - OpenSearchCollection
-      - PetsChatbotTable
-
-
-
-
-
-
-
 
 
 
@@ -609,21 +609,21 @@ Resources:
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
-              # Permisos para que la Lambda escriba logs en CloudWatch
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
-
-
-              # Permisos para llamar a OpenSearch Serverless (ajusta en prod a ARN del collection)
               - Effect: Allow
                 Action:
                   - "aoss:APIAccessAll"
+                  - "aoss:DashboardsAccessAll"
                   - "aoss:Search"
+                  - "aoss:ReadDocument"
+                  - "aoss:DescribeIndex"
                 Resource: "*"
+
 
 
   # Lambda SearchApiFunction (referencia el role creado arriba)
@@ -712,11 +712,6 @@ Outputs:
     Export:
       Name: !Sub "${AWS::StackName}:OpenSearchCollectionName"
 
-  OpenSearchIngestionPipelineArn:
-    Description: "OSIS pipeline ARN"
-    Value: !GetAtt OpenSearchIngestionPipeline.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}:OSISPipelineArn"
 
   DynamoDBStreamArn:
     Description: "DynamoDB Stream ARN (usar para debug/políticas)"
