@@ -546,10 +546,6 @@ Resources:
 
   OpenSearchDataAccessPolicy:
     Type: AWS::OpenSearchServerless::AccessPolicy
-    DependsOn:
-      - OpenSearchCollection
-      - OpenSearchIngestionRole
-      - SearchApiFunctionRole
     Properties:
       Name: !Sub "${EnvironmentName}-data-access-policy"
       Type: data
@@ -584,74 +580,6 @@ Resources:
               "CollectionName": !Sub "${EnvironmentName}-chat-collection",
               "IndexName": "chats"
             }
-
-
-
-
-# ---------------- Search Lambda + API (proxy a OpenSearch) ----------------
-
-  # IAM role para la Lambda de búsqueda (SearchApiFunction)
-  SearchApiFunctionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-search-api-role"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Path: "/"
-      Policies:
-        - PolicyName: SearchApiBasicPermissions
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
-              - Effect: Allow
-                Action:
-                  - "aoss:APIAccessAll"
-                  - "aoss:DashboardsAccessAll"
-                  - "aoss:Search"
-                  - "aoss:ReadDocument"
-                  - "aoss:DescribeIndex"
-                Resource: "*"
-
-
-
-  # Lambda SearchApiFunction (referencia el role creado arriba)
-  SearchApiFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "${AWS::StackName}-search-api"
-      Description: "API para buscar chats (proxy seguro a OpenSearch Serverless collection)"
-      CodeUri: backend/search-api/
-      Handler: app.lambda_handler
-      Runtime: python3.12
-      Timeout: 10
-      MemorySize: 256
-      Role: !GetAtt SearchApiFunctionRole.Arn
-      Environment:
-        Variables:
-          OPENSEARCH_ENDPOINT: !GetAtt OpenSearchCollection.CollectionEndpoint
-          OPENSEARCH_INDEX: "chats"
-          # NO establecer AWS_REGION -> Lambda lo inyecta automáticamente
-          # Si necesitas la región en otra variable no reservada:
-          # OPENSEARCH_REGION: !Ref AWS::Region
-      Events:
-        ApiSearch:
-          Type: Api
-          Properties:
-            Path: /search
-            Method: get
-            RestApiId: !Ref ChatApi
 
 
 

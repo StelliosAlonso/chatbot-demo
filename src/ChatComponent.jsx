@@ -41,6 +41,8 @@ import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from "@aws-sdk/clie
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import './ChatComponent.css';
 
+
+
 /**
  * Main chat interface component that handles message interaction with Bedrock agent
  * @param {Object} props - Component properties
@@ -874,49 +876,50 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
    * @param {Event} e - Form submission event
    */
   const handleSubmit = async (e) => {
-
     e.preventDefault();
-    if (!newMessage.trim() || !sessionId) return;
-
-    // Lee appConfig si lo necesitas para otras cosas (no obligatorio aquí)
+    if (!newMessage?.trim() || !sessionId) return;
+  
+    // lee appConfig una sola vez aquí
     const appConfig = JSON.parse(localStorage.getItem('appConfig') || '{}');
-
+  
+    // Helper para mostrar credenciales de forma segura (mask)
+    const mask = (s = '') => {
+      if (!s) return '(empty)';
+      const str = String(s);
+      if (str.length <= 8) return `${str.slice(0, 2)}...${str.slice(-2)}`;
+      return `${str.slice(0, 4)}...${str.slice(-4)}`;
+    };
+  
     // Helper interno: envia mensaje al API Gateway del agente (hardcode endpoint)
     const sendToAgentEndpoint = async ({ sessionId, message }) => {
-      const endpoint = 'https://z2a5hwfq92.execute-api.us-east-1.amazonaws.com/production/chat';
+      const endpoint = 'https://fsrf981nu0.execute-api.us-east-1.amazonaws.com/production/chat';
       const headers = { 'Content-Type': 'application/json' };
-
+  
       // Intento de extraer un idToken de Cognito/Amplify para Authorization Bearer (opcional)
       try {
         const AuthModule = await ensureAuthModule().catch(() => null);
         if (AuthModule) {
           let token = null;
           try {
-            // distintos formatos según la versión de Amplify
             if (typeof AuthModule.currentSession === 'function') {
-              // Amplify vX possible shape
               const sess = await AuthModule.currentSession();
-              token = (sess?.getIdToken && typeof sess.getIdToken === 'function' && sess.getIdToken().getJwtToken && sess.getIdToken().getJwtToken())
-                || sess?.idToken?.jwtToken
-                || (sess?.tokens && sess.tokens.idToken);
+              token =
+                (sess?.getIdToken && typeof sess.getIdToken === 'function' && sess.getIdToken().getJwtToken && sess.getIdToken().getJwtToken()) ||
+                sess?.idToken?.jwtToken ||
+                (sess?.tokens && sess.tokens.idToken);
             } else if (typeof AuthModule.fetchAuthSession === 'function') {
-              // Otra posible API
               const f = await AuthModule.fetchAuthSession();
               token = f?.tokens?.idToken || f?.idToken?.jwtToken || f?.idToken;
             } else if (AuthModule?.currentAuthenticatedUser) {
-              // Fallback: obtener sesión desde currentAuthenticatedUser (menos habitual)
               try {
                 const cu = await AuthModule.currentAuthenticatedUser();
-                // some flows attach signInUserSession
                 token = cu?.signInUserSession?.idToken?.jwtToken || cu?.idToken?.jwtToken;
-              } catch (e) {
-                // ignore
-              }
+              } catch (e) { /* ignore */ }
             }
           } catch (err) {
             console.debug('No se pudo extraer idToken del AuthModule:', err);
           }
-
+  
           if (token) {
             headers['Authorization'] = `Bearer ${token}`;
             console.debug('sendToAgentEndpoint: Authorization header added (masked).');
@@ -925,27 +928,24 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
       } catch (err) {
         console.debug('sendToAgentEndpoint: ensureAuthModule falló (no Authorization).', err);
       }
-
-      // Construir body que espera el endpoint
+  
       const body = {
         sessionId,
         message,
         user: user?.username || 'anonymous'
       };
-
+  
       const resp = await fetch(endpoint, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
       });
-
+  
       if (!resp.ok) {
-        // intentar leer cuerpo para diagnóstico
         const txt = await resp.text().catch(() => '');
         throw new Error(`Agent API error ${resp.status}: ${txt}`);
       }
-
-      // parseo seguro de JSON
+  
       let data = null;
       try {
         data = await resp.json();
@@ -954,103 +954,231 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
         const txt = await resp.text().catch(() => '');
         return txt || '';
       }
-
-      // Soportar varias formas de respuesta comunes
+  
       const reply = data?.reply || data?.response || data?.text || data?.message || (typeof data === 'string' ? data : JSON.stringify(data));
       return reply;
     };
-
-    // Helper para maskear secretos en logs si lo necesitas
-    const mask = (s = '') => {
-      if (!s) return '(empty)';
-      const str = String(s);
-      if (str.length <= 8) return `${str.slice(0, 2)}...${str.slice(-2)}`;
-      return `${str.slice(0, 4)}...${str.slice(-4)}`;
+  
+    // Helper para procesar completion stream de Bedrock (similar al ejemplo)
+    const processCompletion = async (response) => {
+      if (response?.completion === undefined) throw new Error("Completion is undefined");
+      let text = "";
+      for await (const chunkEvent of response.completion) {
+        try {
+          console.debug('chunkEvent (raw):', chunkEvent);
+          if (chunkEvent.trace && chunkEvent.trace.trace && chunkEvent.trace.trace.failureTrace) {
+            console.error('Agent returned failureTrace:', chunkEvent.trace.trace.failureTrace);
+          }
+        } catch (logErr) {
+          console.debug('Error logging chunkEvent', logErr);
+        }
+  
+        if (chunkEvent.trace) {
+          // Mantener trazas/acciones
+          tasksCompleted.count++;
+          if (chunkEvent.trace.trace?.failureTrace) {
+            console.error('FailureTrace detected; throwing with reason:', chunkEvent.trace.trace.failureTrace.failureReason);
+            throw new Error(chunkEvent.trace.trace.failureTrace.failureReason);
+          }
+          if (chunkEvent.trace.trace?.orchestrationTrace?.rationale) {
+            tasksCompleted.latestRationale = chunkEvent.trace.trace.orchestrationTrace.rationale.text;
+            try { scrollToBottom(); } catch (e) { /* ignore */ }
+          }
+          setTasksCompleted({ ...tasksCompleted });
+        } else if (chunkEvent.chunk) {
+          text += new TextDecoder("utf-8").decode(chunkEvent.chunk.bytes);
+        }
+      }
+      return text;
     };
-
+  
     // Clear input field (UX)
     const originalMessage = newMessage;
     setNewMessage('');
-
+  
     // obtener id consistente del usuario (preferimos el email que guardamos en userIdForMessages)
     let senderId = userIdForMessages;
     if (!senderId) {
       try { senderId = await getUserEmail() || user?.username; } catch (e) { senderId = user?.username; }
     }
-
-    // userMessage ahora usa el mismo senderId que guardaremos en backend
-    const userMessage = { text: originalMessage, sender: senderId || user?.username };
+  
+    const userMessage = { text: originalMessage, sender: senderId || user?.username || 'anonymous' };
     setMessages(prev => [...prev, userMessage]);
     setIsAgentResponding(true);
-
+  
     try {
-      // Invocar endpoint del agente
-      console.groupCollapsed('handleSubmit -> invoking external agent endpoint');
+      console.groupCollapsed('handleSubmit -> attempt Bedrock then fallback endpoint');
       console.log('sessionId:', sessionId);
       console.log('user:', user?.username);
       console.log('message preview:', originalMessage.slice(0, 200));
-
-      const replyText = await sendToAgentEndpoint({ sessionId, message: originalMessage });
-
-      console.log('agent reply (preview):', (typeof replyText === 'string' ? replyText.slice(0, 500) : JSON.stringify(replyText).slice(0, 500)));
-
-      const agentMessage = { text: replyText, sender: agentName.value || 'Agent' };
-
-      // 🟢 Obtener y mostrar el email del usuario autenticado
-      let email;
-      let AuthModule;
-
-      try {
-        AuthModule = await ensureAuthModule();
-        console.log('AuthModule resolved:', AuthModule);
-        console.log('AuthModule keys:', Object.keys(AuthModule || {}));
-      } catch (authErr) {
-        console.error('No se pudo resolver el módulo Auth:', authErr);
-        return; // abortar si no hay Auth disponible
-      }
-      
-      try {
-        const { getCurrentUser } = AuthModule;
-        if (getCurrentUser) {
-          const user = await getCurrentUser();
-          email = user?.signInDetails?.loginId || user?.username || "desconocido";
-        } else {
-          console.warn("getCurrentUser no está disponible en AuthModule.");
+      console.log('appConfig (loaded):', appConfig);
+  
+      // Intento BEDROCK primero (si hay cliente bedrock disponible)
+      let agentReplyText = null;
+      let usedFallback = false;
+  
+      const bedrockConfig = (appConfig && appConfig.bedrock) || {};
+      const configAgentId = bedrockConfig.agentId ? String(bedrockConfig.agentId).trim() : undefined;
+      const configAliasId = bedrockConfig.agentAliasId ? String(bedrockConfig.agentAliasId).trim() : undefined;
+      const configRegion = bedrockConfig.region ? String(bedrockConfig.region).trim() : undefined;
+  
+      console.log('bedrockConfig:', { agentId: configAgentId, agentAliasId: configAliasId, region: configRegion });
+  
+      if (typeof bedrockClient !== 'undefined' && bedrockClient && !isStrandsAgent) {
+        try {
+          // Obtener credenciales AWS si es necesario para logging (no se mandan en body)
+          const AuthModule = await ensureAuthModule().catch(() => null);
+          let awsCreds;
+          try {
+            awsCreds = await getAwsCredentials(AuthModule, appConfig);
+          } catch (credErr) {
+            console.warn('getAwsCredentials falló (continuando de todas formas):', credErr);
+          }
+  
+          if (awsCreds) {
+            console.log('AWS credentials (masked):', {
+              accessKeyId: mask(awsCreds?.accessKeyId),
+              secretAccessKey: mask(awsCreds?.secretAccessKey),
+              sessionToken: mask(awsCreds?.sessionToken)
+            });
+          }
+  
+          // Construir parámetros base
+          const baseParams = {
+            agentId: configAgentId,
+            sessionId: sessionId,
+            endSession: false,
+            enableTrace: true,
+            inputText: originalMessage
+          };
+  
+          console.log('InvokeAgent baseParams (sanitized):', {
+            agentId: baseParams.agentId,
+            hasSessionId: Boolean(baseParams.sessionId),
+            endSession: baseParams.endSession,
+            enableTrace: baseParams.enableTrace,
+            inputTextPreview: baseParams.inputText.slice(0, 200)
+          });
+  
+          // Intentar con alias si existe; si falla con ResourceNotFound -> reintentar sin alias
+          let response;
+          if (configAliasId) {
+            try {
+              const paramsWithAlias = { ...baseParams, agentAliasId: configAliasId };
+              console.log('Attempting InvokeAgent with aliasId:', configAliasId);
+              const command = new InvokeAgentCommand(paramsWithAlias);
+              response = await bedrockClient.send(command);
+            } catch (err) {
+              console.error('InvokeAgent with alias failed:', { name: err?.name, message: err?.message, $metadata: err?.$metadata });
+              if (err && err.name === 'ResourceNotFoundException') {
+                console.warn('Alias no encontrado; reintentando solo con agentId...');
+                const command = new InvokeAgentCommand(baseParams); // sin agentAliasId
+                response = await bedrockClient.send(command);
+              } else {
+                // Propagar para que el catch exterior pueda hacer fallback
+                throw err;
+              }
+            }
+          } else {
+            // No hay alias => invocar directamente con agentId
+            const command = new InvokeAgentCommand(baseParams);
+            response = await bedrockClient.send(command);
+          }
+  
+          console.log('InvokeAgent response metadata:', {
+            $metadata: response?.$metadata ? { httpStatusCode: response.$metadata.httpStatusCode, requestId: response.$metadata.requestId } : undefined
+          });
+  
+          // procesar streaming completion
+          const completionText = await processCompletion(response);
+          console.log('completionText (preview):', completionText.slice(0, 500));
+          agentReplyText = completionText;
+        } catch (bedrockErr) {
+          console.error('Bedrock invocation failed, will fallback to endpoint:', {
+            name: bedrockErr?.name,
+            message: bedrockErr?.message,
+            $metadata: bedrockErr?.$metadata
+          });
+          usedFallback = true;
         }
-      } catch (emailErr) {
-        console.error("❌ Error obteniendo email del usuario:", emailErr);
+      } else {
+        console.log('No bedrockClient available or isStrandsAgent === true: skipping Bedrock attempt.');
+        usedFallback = true;
       }
-
-      // Guardar mensaje del usuario (usa senderId consistente)
-      await storeMessage({ chatId: sessionId, message: originalMessage, sender: senderId });
-
-      // Guardar la respuesta del agente conservando el agentName
-      await storeMessage({ chatId: sessionId, message: replyText, sender: agentName.value || "Agent" });
-
-      // Append agent message and persist both user+agent messages
+  
+      // Si bedrock falló o no estaba disponible, usar endpoint fallback
+      if (usedFallback || agentReplyText === null) {
+        console.groupCollapsed('FALLBACK -> invoking external agent HTTP endpoint');
+        try {
+          const replyText = await sendToAgentEndpoint({ sessionId, message: originalMessage });
+          console.log('fallback endpoint reply (preview):', (typeof replyText === 'string' ? replyText.slice(0, 500) : JSON.stringify(replyText).slice(0, 500)));
+          agentReplyText = replyText;
+        } catch (endpointErr) {
+          console.error('Fallback endpoint also failed:', {
+            name: endpointErr?.name,
+            message: endpointErr?.message,
+            stack: endpointErr?.stack
+          });
+          throw endpointErr; // será capturado por el catch global abajo
+        } finally {
+          console.groupEnd();
+        }
+        console.groupEnd();
+      }
+  
+      // Build agent message and persist both messages
+      const agentMessage = { text: agentReplyText, sender: agentName?.value || 'Agent' };
+  
+      // 🟢 Obtener y mostrar el email del usuario autenticado (opcional, no abortar si falla)
+      try {
+        const AuthModuleForEmail = await ensureAuthModule().catch(() => null);
+        if (AuthModuleForEmail && AuthModuleForEmail.getCurrentUser) {
+          try {
+            const currentUser = await AuthModuleForEmail.getCurrentUser();
+            console.log('Authenticated user (for debug):', currentUser?.signInDetails?.loginId || currentUser?.username || 'desconocido');
+          } catch (emailErr) {
+            console.warn('No se pudo obtener getCurrentUser:', emailErr);
+          }
+        }
+      } catch (e) {
+        console.debug('No se pudo acceder a AuthModule para email (continuando):', e);
+      }
+  
+      // Guardar mensajes (usuario + agente)
+      try {
+        await storeMessage({ chatId: sessionId, message: originalMessage, sender: senderId });
+      } catch (smErr) {
+        console.warn('storeMessage (user) falló (continuando):', smErr);
+      }
+      try {
+        await storeMessage({ chatId: sessionId, message: agentReplyText, sender: agentName?.value || 'Agent' });
+      } catch (smErr2) {
+        console.warn('storeMessage (agent) falló (continuando):', smErr2);
+      }
+  
+      // Append agent message to UI and persist locally
       setMessages(prev => [...prev, agentMessage]);
-      storeMessages(sessionId, [userMessage, agentMessage]);
-
+      try { storeMessages(sessionId, [userMessage, agentMessage]); } catch (sme) { console.warn('storeMessages failed:', sme); }
+  
       console.groupEnd();
     } catch (err) {
-      console.error('Error invoking external agent endpoint:', {
+      console.error('Error invoking agent (final catch):', {
         name: err?.name,
         message: err?.message,
-        stack: err?.stack
+        stack: err?.stack,
+        $metadata: err?.$metadata
       });
-
       const errReason = "**" + String(err) + "**";
       const errorMessage = { text: `An error occurred while processing your request:\n${errReason}`, sender: 'agent' };
       setMessages(prev => [...prev, errorMessage]);
-      storeMessages(sessionId, [userMessage, errorMessage]);
+      try { storeMessages(sessionId, [userMessage, errorMessage]); } catch (sme) { /* ignore */ }
     } finally {
       setIsAgentResponding(false);
-      // reset any task-tracking UI state you used antes
       setTasksCompleted({ count: 0, latestRationale: '' });
     }
   };
-
-
+  
+  
 
 
   const handleLogout = async () => {
@@ -1316,57 +1444,6 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
   }, []);
 
 
-
-  // agregar hooks en la parte superior del componente
-  const searchTimeoutRef = React.useRef(null);
-
-  const handleSearchInput = (e) => {
-    const q = e.target.value;
-    // debounce 350ms
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(() => {
-      performSearch(q);
-    }, 350);
-  };
-
-  const performSearch = async (q) => {
-    // si vacío, puedes recargar lista local completa o limpiar resultados
-    if (!q || String(q).trim().length === 0) {
-      // recargar chats originales (puedes mantener originalChats state)
-      // setChats(originalChats);
-      setChats(prev => prev.map(c => ({ ...c, _visible: true })));
-      return;
-    }
-
-    setLoadingChats(true);
-    try {
-      const base = import.meta.env.VITE_SEARCH_API_URL || ''; // definido por Amplify env var
-      const resp = await fetch(`${base}/search?q=${encodeURIComponent(q)}`, {
-        method: 'GET',
-        credentials: 'include' // si usas cookies/Cognito; ajusta según auth
-      });
-      if (!resp.ok) throw new Error('search failed');
-      const json = await resp.json();
-      const results = json.results || [];
-      // mapear a tu shape de chats
-      const mapped = results.map(r => ({
-        chatId: r.chatId,
-        chatName: r.chatName,
-        lastMessageSnippet: r.snippet,
-        createdAt: r.lastMessageAt,
-        _visible: true
-      }));
-      setChats(mapped);
-    } catch (err) {
-      console.error('Search error', err);
-    } finally {
-      setLoadingChats(false);
-    }
-  };
-
-
-
-
   return (() => {
     // calcular índice de la última respuesta enviada por el agente (sender distinto a user.username)
     const lastAgentIndex = messages.reduce((acc, m, i) => (m.sender !== user.username ? i : acc), -1);
@@ -1395,7 +1472,10 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                     type="search"
                     className="chat-search"
                     placeholder="Search chats..."
-                    onChange={handleSearchInput}
+                    onChange={(e) => {
+                      const q = e.target.value.toLowerCase();
+                      setChats(prev => prev.map(c => ({ ...c, _visible: String(c.chatName || '').toLowerCase().includes(q) })));
+                    }}
                     aria-label="Search chats"
                   />
                 </div>
@@ -1577,7 +1657,7 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                     <div key={index} className="message-row">
                       <ChatBubble
                         ariaLabel={`${message.sender} message`}
-                        type={message.sender === user.username ? "outgoing" : "incoming"}
+                        type={ (message.outgoing === true) || (message.sender === user.username) ? "outgoing" : "incoming" }
                         avatar={
                           <Avatar
                             ariaLabel={message.sender}
@@ -1752,8 +1832,8 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
               <Modal
                 onDismiss={cancelDeleteChat}
                 visible={showDeleteChatModal}
-                header="Confirmar eliminación"
-                closeAriaLabel="Cerrar"
+                header="Confirm deletion"
+                closeAriaLabel="Close"
                 footer={
                   <Box float="right">
                     <SpaceBetween direction="horizontal" size="xs">
