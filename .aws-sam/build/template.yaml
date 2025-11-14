@@ -469,8 +469,7 @@ Resources:
           - BedrockAgent
           - AgentId
       - Name: VITE_SEARCH_API_URL
-        Value:
-          Fn::Sub: https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
+        Value: https://PLACEHOLDER_SEARCH_API
       BuildSpec: "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n\
         \        - if [ -f package-lock.json ]; then npm ci; else npm install; fi\n\
         \    build:\n      commands:\n        - npm run build\n  artifacts:\n    baseDirectory:\
@@ -569,10 +568,6 @@ Resources:
             Resource: '*'
   OpenSearchDataAccessPolicy:
     Type: AWS::OpenSearchServerless::AccessPolicy
-    DependsOn:
-    - OpenSearchCollection
-    - OpenSearchIngestionRole
-    - SearchApiFunctionRole
     Properties:
       Name:
         Fn::Sub: ${EnvironmentName}-data-access-policy
@@ -600,11 +595,70 @@ Resources:
           CollectionName:
             Fn::Sub: ${EnvironmentName}-chat-collection
           IndexName: chats
+  SearchApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription:
+        Fn::Sub: SG for SearchApiFunction to access OpenSearch collection (${EnvironmentName})
+      VpcId: vpc-0e68c47c58043c095
+      GroupName:
+        Fn::Sub: ${EnvironmentName}-search-sg
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        SourceSecurityGroupId:
+          Ref: SearchApiSecurityGroup
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${EnvironmentName}-search-sg
+  OpenSearchVPCEndpoint:
+    Type: AWS::OpenSearchServerless::VpcEndpoint
+    Properties:
+      Name:
+        Fn::Sub: ${EnvironmentName}chatvpce
+      VpcId: vpc-0e68c47c58043c095
+      SubnetIds:
+      - subnet-09007170ff72ea713
+      SecurityGroupIds:
+      - Ref: SearchApiSecurityGroup
+    DependsOn:
+    - SearchApiSecurityGroup
+  OpenSearchVpcAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name:
+        Fn::Sub: ${EnvironmentName}-data-access-from-roles
+      Type: data
+      Description:
+        Fn::Sub: Allow read access to 'chats' index for the Lambda search role and
+          the ingestion role
+      Policy:
+        Fn::Sub:
+        - "[\n  {\n    \"Description\":\"Allow Lambda and ingestion role read access\
+          \ to chats index\",\n    \"Rules\":[\n      {\n        \"ResourceType\"\
+          :\"index\",\n        \"Resource\":[\"index/${CollectionName}/${IndexName}\"\
+          ],\n        \"Permission\":[\"aoss:ReadDocument\"]\n      }\n    ],\n  \
+          \  \"Principal\":[ \"${SearchRoleArn}\", \"${IngestRoleArn}\" ]\n  }\n]\n"
+        - CollectionName:
+            Fn::Sub: ${EnvironmentName}-chat-collection
+          IndexName: chats
+          SearchRoleArn:
+            Fn::GetAtt:
+            - SearchApiFunctionRole
+            - Arn
+          IngestRoleArn:
+            Fn::GetAtt:
+            - OpenSearchIngestionRole
+            - Arn
+    DependsOn:
+    - OpenSearchCollection
   SearchApiFunctionRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName:
-        Fn::Sub: ${AWS::StackName}-search-api-role
+        Fn::Sub: ${EnvironmentName}-search-api-role-${AWS::AccountId}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -612,10 +666,14 @@ Resources:
           Principal:
             Service:
             - lambda.amazonaws.com
-          Action: sts:AssumeRole
+          Action:
+          - sts:AssumeRole
       Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
-      - PolicyName: SearchApiBasicPermissions
+      - PolicyName: SearchApiInlinePolicy
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -626,24 +684,16 @@ Resources:
             - logs:PutLogEvents
             Resource:
               Fn::Sub: arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
-          - Effect: Allow
-            Action:
-            - aoss:APIAccessAll
-            - aoss:DashboardsAccessAll
-            - aoss:Search
-            - aoss:ReadDocument
-            - aoss:DescribeIndex
-            Resource: '*'
   SearchApiFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName:
-        Fn::Sub: ${AWS::StackName}-search-api
-      Description: API para buscar chats (proxy seguro a OpenSearch Serverless collection)
+        Fn::Sub: ${AWS::StackName}-search-chats
+      Description: Search chats via OpenSearch
       CodeUri: SearchApiFunction
       Handler: app.lambda_handler
       Runtime: python3.12
-      Timeout: 10
+      Timeout: 30
       MemorySize: 256
       Role:
         Fn::GetAtt:
@@ -656,11 +706,16 @@ Resources:
             - OpenSearchCollection
             - CollectionEndpoint
           OPENSEARCH_INDEX: chats
+      VpcConfig:
+        SecurityGroupIds:
+        - Ref: SearchApiSecurityGroup
+        SubnetIds:
+        - subnet-09007170ff72ea713
       Events:
-        ApiSearch:
+        ApiSearchChats:
           Type: Api
           Properties:
-            Path: /search
+            Path: /search/chats
             Method: get
             RestApiId:
               Ref: ChatApi

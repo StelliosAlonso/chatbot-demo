@@ -582,19 +582,35 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
     }
   };
 
-  // ----- fetchUserChats: obtiene lista de chats del backend
-  const fetchUserChats = async () => {
+
+
+  // Normalizar base API para evitar duplicar rutas como "/chats/search/chats"
+  const rawChatApi = import.meta.env.VITE_CHAT_API_URL || API_URL || '';
+  // quitar un posible sufijo '/search/chats' o '/chats' si ya está presente
+  const API_ROOT = rawChatApi.replace(/\/(?:search\/chats|chats)\/?$/i, '').replace(/\/$/,'');
+  // Construir URL final de búsqueda (VITE_SEARCH_API_URL tiene prioridad si está definida)
+  const SEARCH_API = import.meta.env.VITE_SEARCH_API_URL || `${API_ROOT}/search/chats`;
+
+
+  // debounce helper
+  const debounce = (fn, delay) => {
+    let t;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), delay);
+    };
+  };
+
+  const fetchUserChats = async (query = '') => {
     setLoadingChats(true);
     try {
-      const token = await getAuthToken();
-      const email = await getUserEmail();
+      const token = await getAuthToken().catch(()=>null);
+      const email = await getUserEmail().catch(()=>null);
+      const params = new URLSearchParams();
+      if (query) params.append('q', query);
+      if (email) params.append('user', email);
 
-      // Intentar llamar con Authorization primero; si backend necesita email como query param, pasarlo también
-      let url = API_URL; // asumes API_URL apunta a .../chats (según tu uso en handleConfirmCreate)
-      if (email && !url.includes('?')) {
-        url = `${url}?email=${encodeURIComponent(email)}`; // fallback amigable
-      }
-
+      const url = `${SEARCH_API}?${params.toString()}`;
       const resp = await fetch(url, {
         method: 'GET',
         headers: {
@@ -604,37 +620,29 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
       });
 
       if (!resp.ok) {
-        console.warn('fetchUserChats: respuesta no OK', resp.status);
+        console.warn('search api not ok', resp.status);
         setChats([]);
         return;
       }
 
       const data = await resp.json();
-      // Esperamos que el endpoint devuelva un array de items tipo { chatId, chatName, createdAt }
-      // Si devuelve items estilo Dynamo (PK/SK), transformamos
-      if (Array.isArray(data)) {
-        setChats(data.map(item => ({
-          chatId: item.chatId || (item.SK || '').replace(/^CHAT#/, ''),
-          chatName: item.chatName || item.chatName || (item.chatName ? item.chatName : 'Chat sin nombre'),
-          createdAt: item.createdAt || item.createdAt
-        })));
-      } else if (data.Items) {
-        // si devolviera un objeto con "Items"
-        setChats(data.Items.map(it => ({
-          chatId: it.SK?.replace(/^CHAT#/, '') || it.chatId,
-          chatName: it.chatName || it.title || 'Chat',
-          createdAt: it.createdAt
-        })));
-      } else {
-        setChats([]);
-      }
+      // suponer que data es array [{chatId, chatName, createdAt}]
+      setChats(data.map(it => ({
+        chatId: it.chatId,
+        chatName: it.chatName,
+        createdAt: it.createdAt
+      })));
     } catch (err) {
-      console.error('fetchUserChats error:', err);
+      console.error('fetchUserChats(search) error:', err);
       setChats([]);
     } finally {
       setLoadingChats(false);
     }
   };
+
+  // Debounced version para poner en search input
+  const debouncedFetchUserChats = useCallback(debounce((q) => fetchUserChats(q), 350), []);
+
 
   // ----- fetchChatMessages: obtiene mensajes desde backend
   const fetchChatMessages = async (chatId) => {
@@ -1473,8 +1481,9 @@ const ChatComponent = ({ user, onLogout, onConfigEditorClick }) => {
                     className="chat-search"
                     placeholder="Search chats..."
                     onChange={(e) => {
-                      const q = e.target.value.toLowerCase();
-                      setChats(prev => prev.map(c => ({ ...c, _visible: String(c.chatName || '').toLowerCase().includes(q) })));
+                      const q = e.target.value;
+                      setSearchQuery(q);
+                      debouncedFetchUserChats(q);
                     }}
                     aria-label="Search chats"
                   />

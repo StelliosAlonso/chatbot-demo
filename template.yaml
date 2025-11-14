@@ -584,6 +584,141 @@ Resources:
 
 
 
+ # -------------------- Security Group para SearchApiFunction (OpenSearch access) --------------------
+  SearchApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "SG for SearchApiFunction to access OpenSearch collection (${EnvironmentName})"
+      # <-- REEMPLAZAR: aquí debes poner el VPC ID donde se crearán las ENIs de Lambda
+      # Puedes editar este valor en el template antes de deploy o crear el SG manualmente después en la consola.
+      VpcId: "vpc-0e68c47c58043c095"
+      GroupName: !Sub "${EnvironmentName}-search-sg"
+      # Opcional: reglas Ingress mínimas. Para Lambdas en VPC normalmente no necesitas Ingress (la Lambda inicia conexiones salientes).
+      # Si tu AOSS endpoint requiere reglas de SG específicas, ajusta aquí o crea reglas entre SGs en la consola.
+      #SecurityGroupIngress:
+        # ejemplo: permitir tráfico desde la misma SG (loopback ENIs) — útil en casos específicos
+        #- IpProtocol: "-1"
+        #  FromPort: -1
+        #  ToPort: -1
+        #  SourceSecurityGroupId: !Ref SearchApiSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-search-sg"
+
+
+
+  # -------------------- OpenSearch Serverless VPC Endpoint --------------------
+  OpenSearchVPCEndpoint:
+    Type: AWS::OpenSearchServerless::VpcEndpoint
+    Properties:
+      # nombre del endpoint (3-32 chars, empieza con letra, solo minusculas y dígitos)
+      Name: !Sub "${EnvironmentName}chatvpce"
+      VpcId: "vpc-0e68c47c58043c095"               # reuse your VPC id already in the template
+      SubnetIds:
+        - subnet-09007170ff72ea713                 # the subnet you already used for the Lambda
+      SecurityGroupIds:
+        - !Ref SearchApiSecurityGroup
+    DependsOn:
+      - SearchApiSecurityGroup
+
+  # -------------------- Access policy that allows only the created VPCE to call the collection --------------------
+  OpenSearchVpcAccessPolicy:
+    Type: AWS::OpenSearchServerless::AccessPolicy
+    Properties:
+      Name: !Sub "${EnvironmentName}-data-access-from-roles"
+      Type: data
+      Description: !Sub "Allow read access to 'chats' index for the Lambda search role and the ingestion role"
+      Policy:
+        Fn::Sub:
+          - >
+            [
+              {
+                "Description":"Allow Lambda and ingestion role read access to chats index",
+                "Rules":[
+                  {
+                    "ResourceType":"index",
+                    "Resource":["index/${CollectionName}/${IndexName}"],
+                    "Permission":["aoss:ReadDocument"]
+                  }
+                ],
+                "Principal":[ "${SearchRoleArn}", "${IngestRoleArn}" ]
+              }
+            ]
+          - {
+              "CollectionName": !Sub "${EnvironmentName}-chat-collection",
+              "IndexName": "chats",
+              "SearchRoleArn": !GetAtt SearchApiFunctionRole.Arn,
+              "IngestRoleArn": !GetAtt OpenSearchIngestionRole.Arn
+            }
+    DependsOn:
+      - OpenSearchCollection
+
+
+
+  # IAM Role explícito para la Lambda de búsqueda (SearchApiFunctionRole)
+  SearchApiFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvironmentName}-search-api-role-${AWS::AccountId}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SearchApiInlinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+
+
+# ---------- Search Lambda function ----------
+  SearchApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-search-chats"
+      Description: "Search chats via OpenSearch"
+      CodeUri: backend/search_chats/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Timeout: 10
+      MemorySize: 128
+      Role: !GetAtt SearchApiFunctionRole.Arn
+      Environment:
+        Variables:
+          OPENSEARCH_ENDPOINT: !GetAtt OpenSearchCollection.CollectionEndpoint
+          OPENSEARCH_INDEX: "chats"
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SearchApiSecurityGroup
+        SubnetIds:
+          - subnet-09007170ff72ea713
+      Events:
+        ApiSearchChats:
+          Type: Api
+          Properties:
+            Path: /search/chats
+            Method: get
+            RestApiId: !Ref ChatApi
+    DependsOn:
+      - OpenSearchVPCEndpoint
+      - SearchApiFunctionRole
+
+
 
 
 
