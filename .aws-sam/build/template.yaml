@@ -469,7 +469,8 @@ Resources:
           - BedrockAgent
           - AgentId
       - Name: VITE_SEARCH_API_URL
-        Value: https://PLACEHOLDER_SEARCH_API
+        Value:
+          Fn::Sub: https://${ChatApi}.execute-api.${AWS::Region}.amazonaws.com/Prod
       BuildSpec: "version: 1\nfrontend:\n  phases:\n    preBuild:\n      commands:\n\
         \        - if [ -f package-lock.json ]; then npm ci; else npm install; fi\n\
         \    build:\n      commands:\n        - npm run build\n  artifacts:\n    baseDirectory:\
@@ -595,24 +596,40 @@ Resources:
           CollectionName:
             Fn::Sub: ${EnvironmentName}-chat-collection
           IndexName: chats
-  SearchApiSecurityGroup:
+  SearchApiLambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription:
-        Fn::Sub: SG for SearchApiFunction to access OpenSearch collection (${EnvironmentName})
+        Fn::Sub: SG for Lambda ENIs (SearchApiFunction) (${EnvironmentName})
       VpcId: vpc-0e68c47c58043c095
       GroupName:
-        Fn::Sub: ${EnvironmentName}-search-sg
-      SecurityGroupIngress:
-      - IpProtocol: tcp
-        FromPort: 443
-        ToPort: 443
-        SourceSecurityGroupId:
-          Ref: SearchApiSecurityGroup
+        Fn::Sub: ${EnvironmentName}-search-lambda-sg
       Tags:
       - Key: Name
         Value:
-          Fn::Sub: ${EnvironmentName}-search-sg
+          Fn::Sub: ${EnvironmentName}-search-lambda-sg
+  OpenSearchEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription:
+        Fn::Sub: SG for OpenSearch Serverless VPC Endpoint (${EnvironmentName})
+      VpcId: vpc-0e68c47c58043c095
+      GroupName:
+        Fn::Sub: ${EnvironmentName}-aoss-endpoint-sg
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${EnvironmentName}-aoss-endpoint-sg
+  OpenSearchEndpointIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Ref: OpenSearchEndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId:
+        Ref: SearchApiLambdaSecurityGroup
   OpenSearchVPCEndpoint:
     Type: AWS::OpenSearchServerless::VpcEndpoint
     Properties:
@@ -622,9 +639,9 @@ Resources:
       SubnetIds:
       - subnet-09007170ff72ea713
       SecurityGroupIds:
-      - Ref: SearchApiSecurityGroup
+      - Ref: OpenSearchEndpointSecurityGroup
     DependsOn:
-    - SearchApiSecurityGroup
+    - OpenSearchEndpointSecurityGroup
   OpenSearchVpcAccessPolicy:
     Type: AWS::OpenSearchServerless::AccessPolicy
     Properties:
@@ -708,7 +725,7 @@ Resources:
           OPENSEARCH_INDEX: chats
       VpcConfig:
         SecurityGroupIds:
-        - Ref: SearchApiSecurityGroup
+        - Ref: SearchApiLambdaSecurityGroup
         SubnetIds:
         - subnet-09007170ff72ea713
       Events:
@@ -719,6 +736,9 @@ Resources:
             Method: get
             RestApiId:
               Ref: ChatApi
+    DependsOn:
+    - OpenSearchVPCEndpoint
+    - SearchApiFunctionRole
     Metadata:
       SamResourceId: SearchApiFunction
 Outputs:

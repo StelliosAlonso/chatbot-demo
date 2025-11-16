@@ -584,26 +584,38 @@ Resources:
 
 
 
- # -------------------- Security Group para SearchApiFunction (OpenSearch access) --------------------
-  SearchApiSecurityGroup:
+  # Security Group para las ENIs de la Lambda (SearchApiFunction)
+  SearchApiLambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub "SG for SearchApiFunction to access OpenSearch collection (${EnvironmentName})"
-      # <-- REEMPLAZAR: aquí debes poner el VPC ID donde se crearán las ENIs de Lambda
-      # Puedes editar este valor en el template antes de deploy o crear el SG manualmente después en la consola.
+      GroupDescription: !Sub "SG for Lambda ENIs (SearchApiFunction) (${EnvironmentName})"
       VpcId: "vpc-0e68c47c58043c095"
-      GroupName: !Sub "${EnvironmentName}-search-sg"
-      # Opcional: reglas Ingress mínimas. Para Lambdas en VPC normalmente no necesitas Ingress (la Lambda inicia conexiones salientes).
-      # Si tu AOSS endpoint requiere reglas de SG específicas, ajusta aquí o crea reglas entre SGs en la consola.
-      #SecurityGroupIngress:
-        # ejemplo: permitir tráfico desde la misma SG (loopback ENIs) — útil en casos específicos
-        #- IpProtocol: "-1"
-        #  FromPort: -1
-        #  ToPort: -1
-        #  SourceSecurityGroupId: !Ref SearchApiSecurityGroup
+      GroupName: !Sub "${EnvironmentName}-search-lambda-sg"
       Tags:
         - Key: Name
-          Value: !Sub "${EnvironmentName}-search-sg"
+          Value: !Sub "${EnvironmentName}-search-lambda-sg"
+
+  # Security Group para el OpenSearch Serverless VPC Endpoint
+  OpenSearchEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "SG for OpenSearch Serverless VPC Endpoint (${EnvironmentName})"
+      VpcId: "vpc-0e68c47c58043c095"
+      GroupName: !Sub "${EnvironmentName}-aoss-endpoint-sg"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-aoss-endpoint-sg"
+
+
+  # Permitir desde las ENIs de Lambda hacia el endpoint (TCP 443)
+  OpenSearchEndpointIngressFromLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref OpenSearchEndpointSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref SearchApiLambdaSecurityGroup
 
 
 
@@ -611,15 +623,16 @@ Resources:
   OpenSearchVPCEndpoint:
     Type: AWS::OpenSearchServerless::VpcEndpoint
     Properties:
-      # nombre del endpoint (3-32 chars, empieza con letra, solo minusculas y dígitos)
       Name: !Sub "${EnvironmentName}chatvpce"
-      VpcId: "vpc-0e68c47c58043c095"               # reuse your VPC id already in the template
+      VpcId: "vpc-0e68c47c58043c095"
       SubnetIds:
-        - subnet-09007170ff72ea713                 # the subnet you already used for the Lambda
+        - subnet-09007170ff72ea713
+        # (opcional) añade otra subnet aquí si la tienes
       SecurityGroupIds:
-        - !Ref SearchApiSecurityGroup
+        - !Ref OpenSearchEndpointSecurityGroup
     DependsOn:
-      - SearchApiSecurityGroup
+      - OpenSearchEndpointSecurityGroup
+
 
   # -------------------- Access policy that allows only the created VPCE to call the collection --------------------
   OpenSearchVpcAccessPolicy:
@@ -695,8 +708,8 @@ Resources:
       CodeUri: backend/search_chats/
       Handler: app.lambda_handler
       Runtime: python3.12
-      Timeout: 10
-      MemorySize: 128
+      Timeout: 30
+      MemorySize: 256
       Role: !GetAtt SearchApiFunctionRole.Arn
       Environment:
         Variables:
@@ -704,9 +717,10 @@ Resources:
           OPENSEARCH_INDEX: "chats"
       VpcConfig:
         SecurityGroupIds:
-          - !Ref SearchApiSecurityGroup
+          - !Ref SearchApiLambdaSecurityGroup
         SubnetIds:
           - subnet-09007170ff72ea713
+
       Events:
         ApiSearchChats:
           Type: Api
